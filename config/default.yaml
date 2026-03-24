@@ -1,0 +1,48 @@
+# ======== M1：视觉流采集 ========
+stream:
+  url: "http://192.168.4.2:81/stream"     # ESP32-CAM MJPEG 流地址
+  timeout_ms: 3000                         # 连接/读取超时（毫秒）
+
+# ======== M2：YOLO-OBB 推理 ========
+perception:
+  weights: "weights/yolov8n-obb-custom.pt" # 权重文件路径
+  conf_threshold: 0.6                      # NMS 置信度下限
+  device: "cuda:0"                         # 推理设备
+
+# ======== M3：PD 视觉伺服控制器 ========
+servo:
+  kp: { x: 0.003, y: 0.003, yaw: 0.6 }
+  kd: { x: 0.001, y: 0.001, yaw: 0.1 }
+  deadband: { x: 15, y: 15, yaw: 0.05 }   # 死区阈值（像素/弧度）
+  max_vel: { x: 0.3, y: 0.3, yaw: 0.5 }   # 饱和限幅（m/s 或 rad/s）
+
+# ======== M4：MAVLink 通信 ========
+mavlink:
+  connection: "udp:192.168.4.1:14550"      # 飞控 UDP 链路
+  heartbeat_timeout_s: 5                   # 心跳超时（秒）
+
+# ======== M5：状态机 / 容错 ========
+fsm:
+  align_hold_time_s: 1.5                   # 对齐防抖持续时间（秒）
+  target_lost_hover_s: 1.0                 # 短时丢失 → 悬停阈值
+  target_lost_climb_s: 3.0                 # 长时丢失 → 爬升阈值
+  climb_vz: -0.2                           # 爬升速度（m/s，NED 下为负）
+  tick_rate_hz: 15                         # 主循环频率上限
+
+# ======== 日志系统 ========
+logging:
+  level: "INFO"                            # DEBUG / INFO / WARNING / ERROR
+  log_dir: "logs/"                         # 日志输出目录
+  enable_flight_recorder: true             # 是否启用飞行黑匣子
+
+# ======== 图像参数 ========
+camera:
+  resolution: { w: 640, h: 480 }           # 图像分辨率
+  center_u: 320                            # 光学中心 u 坐标
+  center_v: 240                            # 光学中心 v 坐标
+
+# ======== 末端执行器（夹爪） ========
+gripper:
+  channel: 9                               # AUX 通道号
+  open_pwm: 1100                           # 张开脉宽（μs）
+  close_pwm: 1900                          # 闭合脉宽（μs）

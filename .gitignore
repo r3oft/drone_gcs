@@ -58,3 +58,6 @@ desktop.ini
 *.bak
 *.tmp
 *.temp
+
+# ===================== Agent Config =====================
+agent/
