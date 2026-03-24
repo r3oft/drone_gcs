@@ -1,0 +1,60 @@
+# ===================== Python =====================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+*.manifest
+*.spec
+
+# ===================== 虚拟环境 =====================
+.env
+.venv
+env/
+venv/
+
+# ===================== IDE / 编辑器 =====================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# ===================== YOLO 权重文件（体积大，不入库） =====================
+weights/*.pt
+weights/*.onnx
+weights/*.engine
+weights/*.tflite
+!weights/README.md
+
+# ===================== 训练 / 推理产物 =====================
+runs/
+wandb/
+
+# ===================== 日志 & 飞行记录 =====================
+logs/
+*.log
+*.csv
+
+# ===================== 数据集（体积大，不入库） =====================
+datasets/
+data/
+
+# ===================== OS 生成文件 =====================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===================== Jupyter Notebook =====================
+.ipynb_checkpoints/
+
+# ===================== 杂项 =====================
+*.bak
+*.tmp
+*.temp
