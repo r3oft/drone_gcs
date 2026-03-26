@@ -176,3 +176,8 @@ class FlightRecorder:
 
     def __exit__(self, *args) -> None:
         self.close()
+
+    def __del__(self) -> None:
+        """防止未显式关闭时泄漏文件句柄。"""
+        if not self._closed:
+            self.close()

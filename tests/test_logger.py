@@ -11,7 +11,6 @@ from utils.logger import (
     ColoredFormatter,
     FlightRecorder,
     setup_logger,
-    _BOOT_TIMESTAMP,
 )
 
 

@@ -35,6 +35,13 @@ logging:
   log_dir: "logs/"                         # 日志输出目录
   enable_flight_recorder: true             # 是否启用飞行黑匣子
 
+# ======== 性能监控 ========
+perf:
+  window_size: 30                          # 滑动窗口大小（样本数）
+  enable: true                             # 全局开关（生产环境可关闭）
+  print_interval: 150                      # 每隔多少帧打印一次摘要（0 = 不自动打印）
+  warn_threshold_ms: 80                    # 单帧耗时告警阈值（ms）
+
 # ======== 图像参数 ========
 camera:
   resolution: { w: 640, h: 480 }           # 图像分辨率

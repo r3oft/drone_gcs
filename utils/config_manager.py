@@ -1,4 +1,5 @@
 import copy
+import os
 import warnings
 from typing import Any
 
@@ -32,7 +33,6 @@ class ConfigManager:
 
     def _load(self) -> None:
         """从 self._config_path 加载 YAML 文件到 self._data。"""
-        import os
         if not os.path.isfile(self._config_path):
             raise FileNotFoundError(
                 f"配置文件不存在：{self._config_path!r}，"
