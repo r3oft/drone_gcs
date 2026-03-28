@@ -45,9 +45,8 @@ def pixel_to_body_error(
     """
     将像素坐标误差映射为机体系 (前向, 侧向) 误差。
 
-    基于下视 BEV 正交投影假设：
-        E_x = center_v - v    （纵向像素差 → 前向误差）
-        E_y = u - center_u    （横向像素差 → 侧向误差）
+    E_x = center_v - v    （纵向像素差 → 前向误差）
+    E_y = u - center_u    （横向像素差 → 侧向误差）
 
     Args:
         u:        目标像素横坐标
