@@ -1,55 +1,80 @@
-# ======== M1：视觉流采集 ========
+# ======== M1：视觉流采集（双摄像头） ========
 stream:
-  url: "http://192.168.4.2:81/stream"     # ESP32-CAM MJPEG 流地址
-  timeout_ms: 3000                         # 连接/读取超时（毫秒）
+  cargo_cam:                                   # 中心摄像头 — 检测货箱
+    url: "http://192.168.4.2:81/stream"        # ESP32-CAM #1 MJPEG 流地址
+    timeout_ms: 3000                           # 连接/读取超时（毫秒）
+  delivery_cam:                                # 外侧摄像头 — 检测投递区
+    url: "http://192.168.4.3:81/stream"        # ESP32-CAM #2 MJPEG 流地址（待确认）
+    timeout_ms: 3000
 
 # ======== M2：YOLO-OBB 推理 ========
 perception:
-  weights: "weights/yolov8n-obb-custom.pt" # 权重文件路径
-  conf_threshold: 0.6                      # NMS 置信度下限
-  device: "cuda:0"                         # 推理设备
+  weights: "weights/yolov8n-obb-custom.pt"     # 权重文件路径（两类共用同一模型）
+  conf_threshold: 0.6                          # NMS 置信度下限
+  device: "cuda:0"                             # 推理设备
+  # 任务目标映射：将 FSM 任务阶段绑定到目标类别与摄像头
+  task_targets:
+    cargo:
+      cls_id: 0                                # cargo 类别 ID
+      camera: "cargo_cam"                      # 对应 stream.cargo_cam
+    landing_zone:
+      cls_id: 1                                # landing_zone 类别 ID
+      camera: "delivery_cam"                   # 对应 stream.delivery_cam
 
-# ======== M3：PD 视觉伺服控制器 ========
+# ======== M3：PD 视觉伺服控制器（按任务阶段分组） ========
 servo:
-  kp: { x: 0.003, y: 0.003, yaw: 0.6 }
-  kd: { x: 0.001, y: 0.001, yaw: 0.1 }
-  deadband: { x: 15, y: 15, yaw: 0.05 }   # 死区阈值（像素/弧度）
-  max_vel: { x: 0.3, y: 0.3, yaw: 0.5 }   # 饱和限幅（m/s 或 rad/s）
+  cargo_align:                                 # 货箱对准阶段参数
+    kp: { x: 0.003, y: 0.003, yaw: 0.6 }
+    kd: { x: 0.001, y: 0.001, yaw: 0.1 }
+    deadband: { x: 15, y: 15, yaw: 0.05 }     # 死区阈值（像素/弧度）
+    max_vel: { x: 0.3, y: 0.3, yaw: 0.5 }     # 饱和限幅（m/s 或 rad/s）
+  delivery_align:                              # 投递区对准阶段（30x30cm，精度要求较低）
+    kp: { x: 0.003, y: 0.003, yaw: 0.6 }
+    kd: { x: 0.001, y: 0.001, yaw: 0.1 }
+    deadband: { x: 30, y: 30, yaw: 0.1 }       # 死区放大，允许较大误差
+    max_vel: { x: 0.3, y: 0.3, yaw: 0.5 }
 
 # ======== M4：MAVLink 通信 ========
 mavlink:
-  connection: "udp:192.168.4.1:14550"      # 飞控 UDP 链路
-  heartbeat_timeout_s: 5                   # 心跳超时（秒）
+  connection: "udp:192.168.4.1:14550"          # 飞控 UDP 链路
+  heartbeat_timeout_s: 5                       # 心跳超时（秒）
 
 # ======== M5：状态机 / 容错 ========
 fsm:
-  align_hold_time_s: 1.5                   # 对齐防抖持续时间（秒）
-  target_lost_hover_s: 1.0                 # 短时丢失 → 悬停阈值
-  target_lost_climb_s: 3.0                 # 长时丢失 → 爬升阈值
-  climb_vz: -0.2                           # 爬升速度（m/s，NED 下为负）
-  tick_rate_hz: 15                         # 主循环频率上限
+  align_hold_time_s: 1.5                       # 对齐防抖持续时间（秒）
+  target_lost_hover_s: 1.0                     # 短时丢失 → 悬停阈值
+  target_lost_climb_s: 3.0                     # 长时丢失 → 爬升阈值
+  climb_vz: -0.2                               # 爬升速度（m/s，NED 下为负）
+  tick_rate_hz: 15                             # 主循环频率上限
 
 # ======== 日志系统 ========
 logging:
-  level: "INFO"                            # DEBUG / INFO / WARNING / ERROR
-  log_dir: "logs/"                         # 日志输出目录
-  enable_flight_recorder: true             # 是否启用飞行黑匣子
+  level: "INFO"                                # DEBUG / INFO / WARNING / ERROR
+  log_dir: "logs/"                             # 日志输出目录
+  enable_flight_recorder: true                 # 是否启用飞行黑匣子
 
 # ======== 性能监控 ========
 perf:
-  window_size: 30                          # 滑动窗口大小（样本数）
-  enable: true                             # 全局开关（生产环境可关闭）
-  print_interval: 150                      # 每隔多少帧打印一次摘要（0 = 不自动打印）
-  warn_threshold_ms: 80                    # 单帧耗时告警阈值（ms）
+  window_size: 30                              # 滑动窗口大小（样本数）
+  enable: true                                 # 全局开关（生产环境可关闭）
+  print_interval: 150                          # 每隔多少帧打印一次摘要（0 = 不自动打印）
+  warn_threshold_ms: 80                        # 单帧耗时告警阈值（ms）
 
-# ======== 图像参数 ========
+# ======== 图像参数（按摄像头分组） ========
 camera:
-  resolution: { w: 640, h: 480 }           # 图像分辨率
-  center_u: 320                            # 光学中心 u 坐标
-  center_v: 240                            # 光学中心 v 坐标
+  cargo_cam:                                   # 中心摄像头（机架中心，检测货箱）
+    resolution: { w: 640, h: 480 }
+    center_u: 320                              # 光学中心 u 坐标
+    center_v: 240                              # 光学中心 v 坐标
+    offset: { x: 0.0, y: 0.0 }                # 相对机体中心的安装偏移（米），无偏移
+  delivery_cam:                                # 外侧摄像头（机架外侧，检测投递区）
+    resolution: { w: 640, h: 480 }
+    center_u: 320
+    center_v: 240
+    offset: { x: 0.0, y: 0.0 }                # 安装偏移量，Phase 3 联调时实测填入
 
 # ======== 末端执行器（夹爪） ========
 gripper:
-  channel: 9                               # AUX 通道号
-  open_pwm: 1100                           # 张开脉宽（μs）
-  close_pwm: 1900                          # 闭合脉宽（μs）
+  channel: 9                                   # AUX 通道号
+  open_pwm: 1100                               # 张开脉宽（μs）
+  close_pwm: 1900                              # 闭合脉宽（μs）

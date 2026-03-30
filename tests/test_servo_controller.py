@@ -390,10 +390,10 @@ class TestIntegrationWithConfig:
         config = ConfigManager(default_path)
 
         return VisualServoController(
-            kp=[config.get("servo.kp.x"), config.get("servo.kp.y"), config.get("servo.kp.yaw")],
-            kd=[config.get("servo.kd.x"), config.get("servo.kd.y"), config.get("servo.kd.yaw")],
-            deadband=[config.get("servo.deadband.x"), config.get("servo.deadband.y"), config.get("servo.deadband.yaw")],
-            max_vel=[config.get("servo.max_vel.x"), config.get("servo.max_vel.y"), config.get("servo.max_vel.yaw")],
+            kp=[config.get("servo.cargo_align.kp.x"), config.get("servo.cargo_align.kp.y"), config.get("servo.cargo_align.kp.yaw")],
+            kd=[config.get("servo.cargo_align.kd.x"), config.get("servo.cargo_align.kd.y"), config.get("servo.cargo_align.kd.yaw")],
+            deadband=[config.get("servo.cargo_align.deadband.x"), config.get("servo.cargo_align.deadband.y"), config.get("servo.cargo_align.deadband.yaw")],
+            max_vel=[config.get("servo.cargo_align.max_vel.x"), config.get("servo.cargo_align.max_vel.y"), config.get("servo.cargo_align.max_vel.yaw")],
         )
 
     def test_t30_config_instantiation(self, config_ctrl):

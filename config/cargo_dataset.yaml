@@ -5,3 +5,4 @@ val: images/val
 # 类别字典
 names:
   0: cargo                 
+  1: landing_zone

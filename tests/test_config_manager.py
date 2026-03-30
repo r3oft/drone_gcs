@@ -263,17 +263,20 @@ class TestDefaultYAMLIntegration:
             assert section in data, f"缺少顶层配置段: {section}"
 
     def test_servo_kp_values(self, default_config):
-        """伺服控制器 PD 增益应为设计文档指定的默认值。"""
-        assert default_config.get("servo.kp.x") == 0.003
-        assert default_config.get("servo.kp.y") == 0.003
-        assert default_config.get("servo.kp.yaw") == 0.6
+        """伺服控制器 PD 增益应为设计文档指定的默认值（cargo_align 阶段）。"""
+        assert default_config.get("servo.cargo_align.kp.x") == 0.003
+        assert default_config.get("servo.cargo_align.kp.y") == 0.003
+        assert default_config.get("servo.cargo_align.kp.yaw") == 0.6
 
     def test_fsm_tick_rate(self, default_config):
         """主循环频率应为 15 Hz。"""
         assert default_config.get("fsm.tick_rate_hz") == 15
 
     def test_stream_url(self, default_config):
-        """视频流地址应已配置。"""
-        url = default_config.get("stream.url")
-        assert url is not None
-        assert url.startswith("http://")
+        """双摄像头视频流地址应已配置。"""
+        cargo_url = default_config.get("stream.cargo_cam.url")
+        assert cargo_url is not None
+        assert cargo_url.startswith("http://")
+        delivery_url = default_config.get("stream.delivery_cam.url")
+        assert delivery_url is not None
+        assert delivery_url.startswith("http://")

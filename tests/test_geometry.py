@@ -264,10 +264,10 @@ class TestIntegrationWithConfig:
         return ConfigManager(default_path)
 
     def test_t40_deadband_with_config_params(self, config):
-        """T40 — 使用 default.yaml 中的死区参数调用 apply_deadband。"""
-        db_x = config.get("servo.deadband.x")
-        db_y = config.get("servo.deadband.y")
-        db_yaw = config.get("servo.deadband.yaw")
+        """T40 — 使用 default.yaml 中的死区参数调用 apply_deadband（cargo_align 阶段）。"""
+        db_x = config.get("servo.cargo_align.deadband.x")
+        db_y = config.get("servo.cargo_align.deadband.y")
+        db_yaw = config.get("servo.cargo_align.deadband.yaw")
 
         # 死区参数应为非负数值
         assert db_x is not None and db_x >= 0
@@ -284,10 +284,10 @@ class TestIntegrationWithConfig:
         assert apply_deadband(db_y + 1, db_y) == db_y + 1
 
     def test_t41_clamp_with_config_params(self, config):
-        """T41 — 使用 default.yaml 中的限幅参数调用 clamp。"""
-        max_vx = config.get("servo.max_vel.x")
-        max_vy = config.get("servo.max_vel.y")
-        max_vyaw = config.get("servo.max_vel.yaw")
+        """T41 — 使用 default.yaml 中的限幅参数调用 clamp（cargo_align 阶段）。"""
+        max_vx = config.get("servo.cargo_align.max_vel.x")
+        max_vy = config.get("servo.cargo_align.max_vel.y")
+        max_vyaw = config.get("servo.cargo_align.max_vel.yaw")
 
         # 限幅参数应为正数
         assert max_vx is not None and max_vx > 0
@@ -304,22 +304,22 @@ class TestIntegrationWithConfig:
 
     def test_t42_full_pipeline_m2_to_m3(self, config):
         """T42 — 模拟 M2→M3 完整数据流：推理输出 → 角度归一化 → 像素映射 → 死区 → 限幅。"""
-        # 模拟 M2 推理输出
+        # 模拟 M2 推理输出（使用 cargo_cam 中心摄像头）
         raw_u, raw_v = 350.0, 210.0
         raw_theta = 1.2  # 较大角度，应被折叠
 
-        # 读取配置
-        center_u = config.get("camera.center_u")
-        center_v = config.get("camera.center_v")
-        db_x = config.get("servo.deadband.x")
-        db_y = config.get("servo.deadband.y")
-        db_yaw = config.get("servo.deadband.yaw")
-        max_vx = config.get("servo.max_vel.x")
-        max_vy = config.get("servo.max_vel.y")
-        max_vyaw = config.get("servo.max_vel.yaw")
-        kp_x = config.get("servo.kp.x")
-        kp_y = config.get("servo.kp.y")
-        kp_yaw = config.get("servo.kp.yaw")
+        # 读取配置（使用 cargo_cam 和 cargo_align 阶段参数）
+        center_u = config.get("camera.cargo_cam.center_u")
+        center_v = config.get("camera.cargo_cam.center_v")
+        db_x = config.get("servo.cargo_align.deadband.x")
+        db_y = config.get("servo.cargo_align.deadband.y")
+        db_yaw = config.get("servo.cargo_align.deadband.yaw")
+        max_vx = config.get("servo.cargo_align.max_vel.x")
+        max_vy = config.get("servo.cargo_align.max_vel.y")
+        max_vyaw = config.get("servo.cargo_align.max_vel.yaw")
+        kp_x = config.get("servo.cargo_align.kp.x")
+        kp_y = config.get("servo.cargo_align.kp.y")
+        kp_yaw = config.get("servo.cargo_align.kp.yaw")
 
         # Step 1：角度归一化（M2 输出处理）
         theta = normalize_obb_angle(raw_theta, symmetry_order=2)
