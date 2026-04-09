@@ -66,8 +66,8 @@ def main():
     parser = argparse.ArgumentParser(description="AnyLabeling JSON 转换为 YOLO-OBB TXT")
     parser.add_argument("--json_dir", default="datasets/cargo_obb/images/train", help="包含 AnyLabeling JSON 文件的目录")
     parser.add_argument("--out_dir", default="datasets/cargo_obb/labels/train", help="输出 YOLO tx t文件的目录")
-    # 允许传入多个 class，用逗号分隔，如: --classes cargo,landing_zone
-    parser.add_argument("--classes", default="cargo,landing_zone", help="所有的类别名称，用逗号隔开，顺序对应 class_id 0, 1, 2...")
+    # 允许传入多个 class，用逗号分隔，如: --classes pickup_zone,delivery_zone
+    parser.add_argument("--classes", default="pickup_zone,delivery_zone", help="所有的类别名称，用逗号隔开，顺序对应 class_id 0, 1, 2...")
     
     args = parser.parse_args()
     classes = [c for c in args.classes.split(",") if c]

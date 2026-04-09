@@ -390,10 +390,10 @@ class TestIntegrationWithConfig:
         config = ConfigManager(default_path)
 
         return VisualServoController(
-            kp=[config.get("servo.cargo_align.kp.x"), config.get("servo.cargo_align.kp.y"), config.get("servo.cargo_align.kp.yaw")],
-            kd=[config.get("servo.cargo_align.kd.x"), config.get("servo.cargo_align.kd.y"), config.get("servo.cargo_align.kd.yaw")],
-            deadband=[config.get("servo.cargo_align.deadband.x"), config.get("servo.cargo_align.deadband.y"), config.get("servo.cargo_align.deadband.yaw")],
-            max_vel=[config.get("servo.cargo_align.max_vel.x"), config.get("servo.cargo_align.max_vel.y"), config.get("servo.cargo_align.max_vel.yaw")],
+            kp=[config.get("servo.pickup_align.kp.x"), config.get("servo.pickup_align.kp.y"), config.get("servo.pickup_align.kp.yaw")],
+            kd=[config.get("servo.pickup_align.kd.x"), config.get("servo.pickup_align.kd.y"), config.get("servo.pickup_align.kd.yaw")],
+            deadband=[config.get("servo.pickup_align.deadband.x"), config.get("servo.pickup_align.deadband.y"), config.get("servo.pickup_align.deadband.yaw")],
+            max_vel=[config.get("servo.pickup_align.max_vel.x"), config.get("servo.pickup_align.max_vel.y"), config.get("servo.pickup_align.max_vel.yaw")],
         )
 
     def test_t30_config_instantiation(self, config_ctrl):

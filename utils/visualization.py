@@ -6,8 +6,8 @@ import numpy as np
 
 
 CLASS_COLORS: dict[str, tuple[int, int, int]] = {
-    "cargo":        (0, 255, 0),     # 绿色
-    "landing_zone": (255, 180, 0),   # 亮蓝色
+    "pickup_zone":  (50, 205, 50),   # 浅绿色
+    "delivery_zone": (255, 180, 0),  # 亮蓝色
     "default":      (0, 200, 255),   # 橙色
 }
 

@@ -264,10 +264,10 @@ class TestIntegrationWithConfig:
         return ConfigManager(default_path)
 
     def test_t40_deadband_with_config_params(self, config):
-        """T40 — 使用 default.yaml 中的死区参数调用 apply_deadband（cargo_align 阶段）。"""
-        db_x = config.get("servo.cargo_align.deadband.x")
-        db_y = config.get("servo.cargo_align.deadband.y")
-        db_yaw = config.get("servo.cargo_align.deadband.yaw")
+        """T40 — 使用 default.yaml 中的死区参数调用 apply_deadband（pickup_align 阶段）。"""
+        db_x = config.get("servo.pickup_align.deadband.x")
+        db_y = config.get("servo.pickup_align.deadband.y")
+        db_yaw = config.get("servo.pickup_align.deadband.yaw")
 
         # 死区参数应为非负数值
         assert db_x is not None and db_x >= 0
@@ -284,10 +284,10 @@ class TestIntegrationWithConfig:
         assert apply_deadband(db_y + 1, db_y) == db_y + 1
 
     def test_t41_clamp_with_config_params(self, config):
-        """T41 — 使用 default.yaml 中的限幅参数调用 clamp（cargo_align 阶段）。"""
-        max_vx = config.get("servo.cargo_align.max_vel.x")
-        max_vy = config.get("servo.cargo_align.max_vel.y")
-        max_vyaw = config.get("servo.cargo_align.max_vel.yaw")
+        """T41 — 使用 default.yaml 中的限幅参数调用 clamp（pickup_align 阶段）。"""
+        max_vx = config.get("servo.pickup_align.max_vel.x")
+        max_vy = config.get("servo.pickup_align.max_vel.y")
+        max_vyaw = config.get("servo.pickup_align.max_vel.yaw")
 
         # 限幅参数应为正数
         assert max_vx is not None and max_vx > 0
@@ -304,22 +304,22 @@ class TestIntegrationWithConfig:
 
     def test_t42_full_pipeline_m2_to_m3(self, config):
         """T42 — 模拟 M2→M3 完整数据流：推理输出 → 角度归一化 → 像素映射 → 死区 → 限幅。"""
-        # 模拟 M2 推理输出（使用 cargo_cam 中心摄像头）
-        raw_u, raw_v = 350.0, 210.0
+        # 模拟 M2 推理输出（误差需超过新的死区 30px）
+        raw_u, raw_v = 370.0, 190.0
         raw_theta = 1.2  # 较大角度，应被折叠
 
-        # 读取配置（使用 cargo_cam 和 cargo_align 阶段参数）
-        center_u = config.get("camera.cargo_cam.center_u")
-        center_v = config.get("camera.cargo_cam.center_v")
-        db_x = config.get("servo.cargo_align.deadband.x")
-        db_y = config.get("servo.cargo_align.deadband.y")
-        db_yaw = config.get("servo.cargo_align.deadband.yaw")
-        max_vx = config.get("servo.cargo_align.max_vel.x")
-        max_vy = config.get("servo.cargo_align.max_vel.y")
-        max_vyaw = config.get("servo.cargo_align.max_vel.yaw")
-        kp_x = config.get("servo.cargo_align.kp.x")
-        kp_y = config.get("servo.cargo_align.kp.y")
-        kp_yaw = config.get("servo.cargo_align.kp.yaw")
+        # 读取配置（单摄像头 + pickup_align 阶段参数）
+        center_u = config.get("camera.center_u")
+        center_v = config.get("camera.center_v")
+        db_x = config.get("servo.pickup_align.deadband.x")
+        db_y = config.get("servo.pickup_align.deadband.y")
+        db_yaw = config.get("servo.pickup_align.deadband.yaw")
+        max_vx = config.get("servo.pickup_align.max_vel.x")
+        max_vy = config.get("servo.pickup_align.max_vel.y")
+        max_vyaw = config.get("servo.pickup_align.max_vel.yaw")
+        kp_x = config.get("servo.pickup_align.kp.x")
+        kp_y = config.get("servo.pickup_align.kp.y")
+        kp_yaw = config.get("servo.pickup_align.kp.yaw")
 
         # Step 1：角度归一化（M2 输出处理）
         theta = normalize_obb_angle(raw_theta, symmetry_order=2)
@@ -327,15 +327,15 @@ class TestIntegrationWithConfig:
 
         # Step 2：像素→机体系误差映射
         error_x, error_y = pixel_to_body_error(raw_u, raw_v, center_u, center_v)
-        assert error_x == center_v - raw_v  # 30.0
-        assert error_y == raw_u - center_u  # 30.0
+        assert error_x == center_v - raw_v  # 50.0
+        assert error_y == raw_u - center_u  # 50.0
 
         # Step 3：死区滤波
         error_x_filtered = apply_deadband(error_x, db_x)
         error_y_filtered = apply_deadband(error_y, db_y)
         error_yaw_filtered = apply_deadband(theta, db_yaw)
 
-        # error_x=30, db_x=15 → 超出死区，保留
+        # error_x=50, db_x=30 → 超出死区，保留
         assert error_x_filtered == error_x
         assert error_y_filtered == error_y
 

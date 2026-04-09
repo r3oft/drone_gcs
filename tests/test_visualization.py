@@ -169,7 +169,7 @@ class TestDrawHud:
 
     def test_t17_dual_class_info(self, viz, black_frame):
         """T17 — 包含双类别信息（camera + target）→ 帧被修改。"""
-        viz.draw_hud(black_frame, {"camera": "delivery_cam", "target": "landing_zone"})
+        viz.draw_hud(black_frame, {"camera": "delivery_cam", "target": "delivery_zone"})
         assert frame_modified(black_frame)
 
 
@@ -283,15 +283,15 @@ class TestSaveFrame:
 class TestClassColors:
     """CLASS_COLORS 常量测试。"""
 
-    def test_t25_cargo_color(self):
-        """T25 — cargo 键存在且为绿色。"""
-        assert "cargo" in CLASS_COLORS
-        assert CLASS_COLORS["cargo"] == (0, 255, 0)
+    def test_t25_pickup_zone_color(self):
+        """T25 — pickup_zone 键存在且为浅绿色。"""
+        assert "pickup_zone" in CLASS_COLORS
+        assert CLASS_COLORS["pickup_zone"] == (50, 205, 50)
 
-    def test_t26_landing_zone_color(self):
-        """T26 — landing_zone 键存在且为蓝色。"""
-        assert "landing_zone" in CLASS_COLORS
-        assert CLASS_COLORS["landing_zone"] == (255, 180, 0)
+    def test_t26_delivery_zone_color(self):
+        """T26 — delivery_zone 键存在且为蓝色。"""
+        assert "delivery_zone" in CLASS_COLORS
+        assert CLASS_COLORS["delivery_zone"] == (255, 180, 0)
 
     def test_t27_default_color(self):
         """T27 — default 回退色可用。"""
