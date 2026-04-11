@@ -66,3 +66,24 @@ gripper:
   channel: 9                                     # AUX 通道号
   open_pwm: 1100                                 # 张开脉宽（μs）
   close_pwm: 1900                                # 闭合脉宽（μs）
+
+# ======== 飞行控制（FlightBridge 使用） ========
+flight:
+  takeoff_alt: 1.5              # 默认任务高度 (m)
+  land_detect_alt: 0.15         # 触地判定高度阈值 (m)
+  arm_timeout_s: 10             # 解锁等待超时 (s)
+  takeoff_timeout_s: 15         # 起飞等待超时 (s)
+  land_timeout_s: 20            # 降落等待超时 (s)
+
+# ======== MCU 通信（MCUBridge 使用） ========
+mcu:
+  grab_timeout_s: 10            # 等待 GRAB_DONE 响应超时 (s)
+  release_timeout_s: 10         # 等待 RELEASE_DONE 响应超时 (s)
+  retry_max: 2                  # 动作失败最大重试次数
+
+# ======== 定距转移 ========
+transfer:
+  delivery_distance_m: 3.0      # 取货区到投递区预设距离 (m)
+  transfer_speed: 0.3           # 转移飞行速度 (m/s)
+  transfer_alt: 1.5             # 转移飞行高度 (m)
+  transfer_heading_deg: 0       # 转移飞行航向 (deg)，待实测确定
