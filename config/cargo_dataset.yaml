@@ -1,4 +1,4 @@
-path: ../datasets/cargo_obb  
+path: datasets/cargo_obb
 train: images/train        
 val: images/val            
 

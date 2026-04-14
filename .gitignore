@@ -27,11 +27,8 @@ venv/
 .settings/
 
 # ===================== YOLO 权重文件（体积大，不入库） =====================
-weights/*.pt
-weights/*.onnx
-weights/*.engine
-weights/*.tflite
-!weights/README.md
+weights/
+*.pt
 
 # ===================== 训练 / 推理产物 =====================
 runs/
@@ -61,3 +58,6 @@ desktop.ini
 
 # ===================== Agent Config =====================
 agent/
+
+
+

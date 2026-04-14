@@ -1,17 +1,5 @@
 """
 AnyLabeling JSON → YOLO-OBB TXT 转换脚本
-
-功能：
-  - 将 AnyLabeling 导出的 rotation/polygon (4点) 标注转换为 YOLO-OBB 格式
-  - 自动从 cargo_dataset.yaml 读取类别配置，确保类别 ID 一致
-  - 支持标签别名映射（如 landing_zone → delivery_zone）
-  - 处理 AnyLabeling 导出 JSON 中的 Infinity 等非标准值
-
-用法：
-  python scripts/anylabeling2obb.py
-  python scripts/anylabeling2obb.py --json_dir datasets/cargo_obb/images/train \
-                                     --out_dir datasets/cargo_obb/labels/train \
-                                     --config config/cargo_dataset.yaml
 """
 
 import json
@@ -22,8 +10,6 @@ from pathlib import Path
 
 import yaml
 
-# ── 标签别名映射 ─────────────────────────────────────────────
-# key = JSON 中实际标注的名称, value = 数据集配置中的正式类别名
 LABEL_ALIASES = {
     "landing_zone": "delivery_zone",
 }
