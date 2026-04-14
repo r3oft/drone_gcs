@@ -1,4 +1,55 @@
+"""
+本模块定义 IFlightBridge 和 IMCUBridge 两个抽象基类，
+以及相关的类型定义和协议常量。
+
+实现方：
+  - 真实实现：飞控组 core/flight_bridge.py（FlightBridge, MCUBridge）
+  - Mock 实现：算法组 utils/mock.py（MockFlightBridge, MockMCUBridge）
+
+消费方：
+  - 算法组 core/state_machine.py（GlobalFSM）
+"""
+
 from abc import ABC, abstractmethod
+from typing import TypedDict
+
+class TelemetryData(TypedDict):
+    """get_telemetry() 返回的遥测数据结构。"""
+    armed: bool            # 是否已解锁
+    mode: str              # 当前飞行模式 (e.g. "GUIDED")
+    alt: float             # 相对高度 (m)
+    heading: float         # 航向角 (deg, 0-360)
+    battery_pct: float     # 电池剩余百分比 (0.0~1.0)
+    heartbeat_ok: bool     # 心跳链路是否正常
+
+class MCUCommand:
+    """MCU 下行指令常量（PC → Pico 2）。"""
+    START_GRAB    = "START_GRAB"
+    START_RELEASE = "START_RELEASE"
+    RESET         = "RESET"
+
+    ALL = frozenset({START_GRAB, START_RELEASE, RESET})
+
+
+class MCUResponse:
+    """MCU 上行响应常量（Pico 2 → PC）。"""
+    GRAB_DONE    = "GRAB_DONE"
+    GRAB_FAIL    = "GRAB_FAIL"
+    RELEASE_DONE = "RELEASE_DONE"
+    RELEASE_FAIL = "RELEASE_FAIL"
+    RESET_DONE   = "RESET_DONE"
+
+    ALL = frozenset({GRAB_DONE, GRAB_FAIL, RELEASE_DONE, RELEASE_FAIL, RESET_DONE})
+
+
+class FlightMode:
+    """飞行模式常量。"""
+    GUIDED = "GUIDED"
+    LOITER = "LOITER"
+    RTL    = "RTL"
+    LAND   = "LAND"
+
+    ALL = frozenset({GUIDED, LOITER, RTL, LAND})
 
 
 class IFlightBridge(ABC):
@@ -93,11 +144,12 @@ class IFlightBridge(ABC):
         ...
 
     @abstractmethod
-    def get_telemetry(self) -> dict:
+    def get_telemetry(self) -> TelemetryData:
         """
         获取当前飞行遥测数据（非阻塞）。
 
         Returns:
+            TelemetryData 字典，包含以下字段：
             {
                 "armed": bool,           # 是否已解锁
                 "mode": str,             # 当前飞行模式 (e.g. "GUIDED")

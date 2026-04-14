@@ -3,7 +3,7 @@ import pytest
 
 pytest.importorskip("dronekit")
 
-from core.FightBridge import FlightBridge, MCUBridge, FlightConfig
+from core.flight_bridge import FlightBridge, MCUBridge, FlightConfig
 
 
 def run_demo_flow(flight_bridge: FlightBridge, mcu_bridge: MCUBridge) -> None:
