@@ -1,10 +1,3 @@
-"""
-utils/mock.py 单元测试。
-
-测试 MockStreamer、MockFlightBridge、MockMCUBridge 三个模拟替身的
-接口一致性、模拟行为正确性和测试辅助功能。
-"""
-
 import os
 import time
 import tempfile
