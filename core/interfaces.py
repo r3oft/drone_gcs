@@ -13,6 +13,8 @@
 from abc import ABC, abstractmethod
 from typing import TypedDict
 
+import numpy as np
+
 class TelemetryData(TypedDict):
     """get_telemetry() 返回的遥测数据结构。"""
     armed: bool            # 是否已解锁
@@ -213,4 +215,33 @@ class IMCUBridge(ABC):
     @abstractmethod
     def is_connected(self) -> bool:
         """检查 MCU 通信链路是否存活。"""
+        ...
+
+
+class IStreamer(ABC):
+    """
+    视频流采集抽象接口。
+
+    真实实现：core/streamer.py（ZeroLatencyStreamer, Phase 3）
+    Mock 实现：utils/mock.py（MockStreamer, Phase 2）
+    """
+
+    @abstractmethod
+    def get_latest_frame(self) -> np.ndarray | None:
+        """
+        获取当前最新帧（非阻塞）。
+
+        Returns:
+            BGR 图像帧（H×W×3, np.uint8），或 None（流未就绪/断连）
+        """
+        ...
+
+    @abstractmethod
+    def release(self) -> None:
+        """释放底层资源（VideoCapture / 网络套接字等）。"""
+        ...
+
+    @abstractmethod
+    def is_opened(self) -> bool:
+        """检查流是否处于可用状态。"""
         ...
