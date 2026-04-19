@@ -291,6 +291,7 @@ class MCUBridge(IMCUBridge):
         self.config = config or FlightConfig()
         self._flight_bridge = flight_bridge
         self._vehicle: Optional[Vehicle] = None
+        self._listener_vehicle: Optional[Vehicle] = None
         self._response_buffer: Optional[str] = None
         self._response_map = {
             b"GRAB_DONE": "GRAB_DONE",
@@ -300,11 +301,14 @@ class MCUBridge(IMCUBridge):
             b"RESET_DONE": "RESET_DONE"
         }
 
+        # 监听回调函数需要保持同一引用，便于重连后重新绑定。
+        self._serial_listener = self._build_serial_listener()
+
         # 注册 SERIAL_CONTROL 消息监听
         self._register_serial_listener()
 
-    def _register_serial_listener(self):
-        """注册串口数据监听回调"""
+    def _build_serial_listener(self):
+        """构建串口数据监听回调。"""
         def _on_serial_control(vehicle, name, msg):
             """处理从 Pixhawk 串口收到的 Pico 2 响应"""
             if msg.port != self.config.mcu_serial_port:
@@ -318,10 +322,25 @@ class MCUBridge(IMCUBridge):
                     logger.debug(f"收到 Pico 2 响应：{resp_str}")
                     break
 
-        # 关联到飞控的消息监听
-        if self._flight_bridge._vehicle:
-            self._vehicle = self._flight_bridge._vehicle
-            self._vehicle.add_message_listener('SERIAL_CONTROL', _on_serial_control)
+        return _on_serial_control
+
+    def _register_serial_listener(self):
+        """注册串口数据监听回调，必要时重新绑定到最新飞控连接。"""
+        current_vehicle = self._flight_bridge._vehicle
+        if current_vehicle is None:
+            self._vehicle = None
+            self._listener_vehicle = None
+            return False
+
+        # 同一连接对象已绑定过监听，无需重复注册。
+        if self._listener_vehicle is current_vehicle:
+            self._vehicle = current_vehicle
+            return True
+
+        self._vehicle = current_vehicle
+        self._vehicle.add_message_listener('SERIAL_CONTROL', self._serial_listener)
+        self._listener_vehicle = current_vehicle
+        return True
 
     def send_command(self, command: str) -> bool:
         """
@@ -337,9 +356,10 @@ class MCUBridge(IMCUBridge):
             logger.error("无法发送MCU指令：飞控未连接")
             return False
 
-        # 确保串口监听器已注册
-        if self._vehicle is None:
-            self._register_serial_listener()
+        # 每次发送前对齐最新飞控连接，避免重连后引用旧 vehicle。
+        if not self._register_serial_listener():
+            logger.error("无法发送MCU指令：飞控连接对象不可用")
+            return False
 
         try:
             # 构造 SERIAL_CONTROL 消息
@@ -373,6 +393,11 @@ class MCUBridge(IMCUBridge):
 
     def is_connected(self) -> bool:
         """检查 MCU 通信链路是否存活"""
-        # MCU 链路依赖飞控连接，此处可扩展串口状态检测
-        return self._flight_bridge.is_connected() and self._vehicle is not None
+        # MCU 链路依赖飞控连接，且必须与当前飞控连接对象一致。
+        current_vehicle = self._flight_bridge._vehicle
+        return (
+            self._flight_bridge.is_connected()
+            and self._vehicle is not None
+            and self._vehicle is current_vehicle
+        )
 

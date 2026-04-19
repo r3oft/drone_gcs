@@ -1,4 +1,5 @@
 import time
+import os
 import pytest
 
 pytest.importorskip("dronekit")
@@ -125,3 +126,61 @@ def test_demo_flow_connect_fail(monkeypatch):
 
     with pytest.raises(RuntimeError, match="飞控连接失败"):
         run_demo_flow(flight_bridge, mcu_bridge)
+
+
+def test_get_connection_health_disconnected():
+    bridge = FlightBridge(FlightConfig(heartbeat_timeout=2))
+
+    health = bridge.get_connection_health()
+
+    assert health["connected"] is False
+    assert health["heartbeat_limit_s"] == 4
+    assert health["connection_string"]
+
+
+def test_is_connected_timeout_then_reconnect(monkeypatch):
+    bridge = FlightBridge(
+        FlightConfig(
+            heartbeat_timeout=1,
+            reconnect_enabled=True,
+            reconnect_max_attempts=2,
+            reconnect_backoff_s=0,
+        )
+    )
+
+    class DummyVehicle:
+        def close(self):
+            return None
+
+    bridge._vehicle = DummyVehicle()
+    bridge._last_heartbeat_time = time.time() - 10
+
+    monkeypatch.setattr(bridge, "connect", lambda: True)
+
+    assert bridge.is_connected() is True
+
+
+@pytest.mark.skipif(
+    os.getenv("RUN_HW_SMOKE", "0") != "1",
+    reason="仅在显式设置 RUN_HW_SMOKE=1 时执行硬件在线冒烟测试",
+)
+def test_hardware_online_smoke():
+    cfg = FlightConfig(
+        connection_string=os.getenv("FC_CONNECTION", "udp:192.168.4.1:14550"),
+        heartbeat_timeout=int(os.getenv("FC_HEARTBEAT_TIMEOUT", "5")),
+        reconnect_enabled=True,
+        reconnect_max_attempts=2,
+        reconnect_backoff_s=1.0,
+    )
+    bridge = FlightBridge(cfg)
+
+    assert bridge.connect() is True
+
+    telemetry = bridge.get_telemetry()
+    assert isinstance(telemetry, dict)
+    assert "mode" in telemetry
+    assert "heartbeat_ok" in telemetry
+
+    health = bridge.get_connection_health()
+    assert isinstance(health, dict)
+    assert health["connected"] is True

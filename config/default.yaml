@@ -32,6 +32,9 @@ servo:
 mavlink:
   connection: "udp:192.168.4.1:14550"            # 飞控 UDP 链路
   heartbeat_timeout_s: 5                         # 心跳超时（秒）
+  reconnect_enabled: true                        # 心跳超时后自动重连
+  reconnect_max_attempts: 3                      # 每次检测触发的最大重连次数
+  reconnect_backoff_s: 1.0                       # 重连退避间隔（秒）
 
 # ======== M5：状态机 / 容错 ========
 fsm:
