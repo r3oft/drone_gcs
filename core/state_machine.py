@@ -2,9 +2,12 @@
 全局有限状态机（M5 模块）。
 """
 
+from __future__ import annotations
+
 import time
 import logging
 from enum import Enum
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -12,10 +15,12 @@ from core.interfaces import (
     IFlightBridge, IMCUBridge,
     MCUCommand, MCUResponse, FlightMode,
 )
-from core.perception import TargetPoseEstimator
-from core.servo_controller import VisualServoController
 from utils.config_manager import ConfigManager
 from utils.logger import setup_logger, FlightRecorder
+
+if TYPE_CHECKING:
+    from core.perception import TargetPoseEstimator
+    from core.servo_controller import VisualServoController
 
 
 class FlightState(Enum):
@@ -112,7 +117,7 @@ class GlobalFSM:
         self._align_stable_start: float = 0.0
 
         # ── 目标丢失看门狗 ──
-        self._last_target_seen: float = 0.0
+        self._last_target_seen: float = time.time()
 
         # ── MCU 交互状态 ──
         self._mcu_cmd_sent: bool = False
@@ -165,7 +170,10 @@ class GlobalFSM:
         self._tick_vel = None
 
         # ── 层 0：全局 Failsafe 拦截 ──
-        if self._state != FlightState.EMERGENCY:
+        # IDLE/RESET 阶段跳过连接类 Failsafe（初始未连接是正常状态）
+        if self._state not in (
+            FlightState.IDLE, FlightState.RESET, FlightState.EMERGENCY
+        ):
             self._check_failsafe()
 
         # 若 Failsafe 在上面触发了跃迁，此 tick 不再执行 handler
@@ -219,13 +227,19 @@ class GlobalFSM:
         """状态跃迁统一入口：写日志、重置计时器和阶段性标志。"""
         old_state = self._state
         self._state = new_state
-        self._state_enter_time = time.time()
+        now = time.time()
+        self._state_enter_time = now
 
         # 重置所有阶段性状态
         self._align_stable_start = 0.0
         self._mcu_cmd_sent = False
         self._mcu_retry_count = 0
         self._transfer_takeoff_done = False
+
+        # 进入视觉状态时初始化目标看门狗，
+        # 防止首帧 target==None 时误判为长时间丢失而触发爬升
+        if new_state in self._VISION_CLS_MAP:
+            self._last_target_seen = now
 
         self._logger.info(f"状态跃迁：{old_state.name} → {new_state.name}")
 
@@ -296,7 +310,10 @@ class GlobalFSM:
         """通用 MCU 指令-响应-重试逻辑。"""
         # 首次进入：发送指令
         if not self._mcu_cmd_sent:
-            self._mcu.send_command(command)
+            if not self._mcu.send_command(command):
+                self._logger.error(f"MCU 指令发送失败: {command}")
+                self._transition_to(FlightState.EMERGENCY)
+                return
             self._mcu_cmd_sent = True
             self._mcu_cmd_time = now
             self._mcu_retry_count = 0
@@ -311,7 +328,10 @@ class GlobalFSM:
         # 失败或超时 → 重试
         if resp == fail_response or (now - self._mcu_cmd_time > timeout):
             if self._mcu_retry_count < self._retry_max:
-                self._mcu.send_command(command)
+                if not self._mcu.send_command(command):
+                    self._logger.error(f"MCU 重试发送失败: {command}")
+                    self._transition_to(FlightState.EMERGENCY)
+                    return
                 self._mcu_retry_count += 1
                 self._mcu_cmd_time = now
                 self._logger.warning(
