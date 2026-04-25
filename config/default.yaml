@@ -1,7 +1,14 @@
 # ======== M1：视觉流采集（单摄像头，外侧安装） ========
 stream:
-  url: "http://192.168.4.2:81/stream"            # ESP32-CAM MJPEG 流地址
+  host: "192.168.43.192"                         # ESP32-S3 CameraWebServer 地址
+  url: "http://192.168.43.192:81/stream"         # MJPEG 低延迟流地址（优先）
+  capture_url: "http://192.168.43.192/capture"   # JPEG 抓拍地址（fallback）
   timeout_ms: 3000                               # 连接/读取超时（毫秒）
+  prefer_stream: true                            # 优先使用 /stream，失败后回退 /capture
+  capture_poll_interval_s: 0.0667                # fallback 轮询间隔，约 15Hz
+  max_stale_s: 2.0                               # 超过该时间的旧帧视为不可用
+  stream_retry_interval_s: 5.0                   # fallback 模式下重试 /stream 的间隔（秒）
+  stream_fail_threshold: 5                       # MJPEG 连续 grab 失败多少次后切换 fallback
 
 # ======== M2：YOLO-OBB 推理 ========
 perception:

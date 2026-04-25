@@ -66,6 +66,7 @@ class StubMCUBridge:
         self._response_idx = 0
         self.command_log: list[str] = []
         self._connected = True
+        self.send_return = True
 
     def set_responses(self, *responses):
         """预设响应序列，每次 get_latest_response() 消费一个。"""
@@ -74,7 +75,7 @@ class StubMCUBridge:
 
     def send_command(self, command: str) -> bool:
         self.command_log.append(command)
-        return True
+        return self.send_return
 
     def get_latest_response(self) -> str | None:
         if self._response_idx < len(self._responses):
@@ -627,3 +628,78 @@ class TestRelAlignDescendSymmetry:
         flight._telemetry["alt"] = 0.1
         fsm.tick(None)
         assert fsm.state == FlightState.TASK_REL_RELEASE
+
+
+class TestStartupWithDisconnectedBridge:
+    """Bug #1 回归：初始未连接的 FlightBridge 不应阻塞启动流程。"""
+
+    def test_idle_not_blocked_by_disconnected(self, flight, mcu, perception, controller, config):
+        """IDLE 状态下 flight 未连接不应触发 EMERGENCY。"""
+        flight._connected = False
+        fsm = GlobalFSM(flight, mcu, perception, controller, config)
+        fsm.request_start()
+        fsm.tick(None)
+        # 应正常进入 RESET，而非 EMERGENCY
+        assert fsm.state == FlightState.RESET
+
+    def test_reset_not_blocked_by_disconnected(self, flight, mcu, perception, controller, config):
+        """RESET 状态下 flight 未连接不应触发 EMERGENCY（连接在 handler 内完成）。"""
+        flight._connected = False
+        fsm = GlobalFSM(flight, mcu, perception, controller, config)
+        fsm.request_start()
+        fsm.tick(None)  # IDLE → RESET
+        assert fsm.state == FlightState.RESET
+        fsm.tick(None)  # RESET handler: 执行 connect + MCU RESET
+        assert fsm.state == FlightState.RESET  # 等待 MCU 响应，非 EMERGENCY
+
+
+class TestFirstFrameTargetLoss:
+    """Bug #3 回归：进入视觉状态后首帧无目标不应立即爬升。"""
+
+    def test_align_first_frame_no_target_no_climb(self, fsm, flight, perception):
+        """刚进入 TASK_REC_ALIGN 且首帧无目标 → 不应发送爬升速度。"""
+        advance_to_state(fsm, flight, None, FlightState.TASK_REC_ALIGN)
+        perception.target = None
+        flight.velocity_log.clear()
+        fsm.tick(None)
+
+        # 不应有爬升速度 (vz == climb_vz == -0.2)
+        if len(flight.velocity_log) > 0:
+            vz = flight.velocity_log[0][2]
+            assert vz != -0.2, "首帧无目标不应触发爬升搜索"
+
+    def test_rel_align_first_frame_no_target_no_climb(self, fsm, flight, perception):
+        """刚进入 TASK_REL_ALIGN 且首帧无目标 → 不应发送爬升速度。"""
+        advance_to_state(fsm, flight, None, FlightState.TASK_REL_ALIGN)
+        perception.target = None
+        flight.velocity_log.clear()
+        fsm.tick(None)
+
+        if len(flight.velocity_log) > 0:
+            vz = flight.velocity_log[0][2]
+            assert vz != -0.2, "首帧无目标不应触发爬升搜索"
+
+
+class TestMCUSendFailure:
+    """Bug #8 回归：MCU send_command 返回 False 时应直接进入 EMERGENCY。"""
+
+    def test_mcu_send_fail_initial(self, fsm, flight, mcu):
+        """首次发送 START_GRAB 失败 → EMERGENCY。"""
+        advance_to_state(fsm, flight, mcu, FlightState.TASK_REC_WAIT_LOAD)
+        mcu.send_return = False
+        fsm.tick(None)
+        assert fsm.state == FlightState.EMERGENCY
+
+    def test_mcu_send_fail_retry(self, fsm, flight, mcu):
+        """重试发送失败 → EMERGENCY。"""
+        advance_to_state(fsm, flight, mcu, FlightState.TASK_REC_WAIT_LOAD)
+
+        # 首次发送成功
+        fsm.tick(None)
+        assert fsm.state == FlightState.TASK_REC_WAIT_LOAD
+
+        # 收到 GRAB_FAIL 触发重试，但重试发送失败
+        mcu.set_responses(MCUResponse.GRAB_FAIL)
+        mcu.send_return = False
+        fsm.tick(None)
+        assert fsm.state == FlightState.EMERGENCY
