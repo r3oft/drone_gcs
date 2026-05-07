@@ -12,7 +12,7 @@ stream:
 
 # ======== M2：YOLO-OBB 推理 ========
 perception:
-  weights: "weights/yolov8n-obb-custom.pt"       # 权重文件路径（两类共用同一模型）
+  weights: "weights/cargo_obb_run2/weights/best.pt"  # 权重文件路径（pickup_zone/delivery_zone 共用）
   conf_threshold: 0.6                            # NMS 置信度下限
   device: "cuda:0"                               # 推理设备
   # 任务目标映射：将 FSM 任务阶段绑定到目标类别
