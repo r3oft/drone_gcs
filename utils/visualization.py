@@ -171,14 +171,34 @@ class DebugVisualizer:
             lines.append(f"State: {info['state']}")
         if "camera" in info:
             lines.append(f"Cam: {info['camera']}")
+        if "mode" in info:
+            lines.append(f"Mode: {info['mode']}")
         if "target" in info:
             lines.append(f"Target: {info['target']}")
+        if "conf" in info:
+            lines.append(f"Conf: {info['conf']:.0%}")
         if "vx" in info:
             lines.append(f"Vx: {info['vx']:+.3f}")
         if "vy" in info:
             lines.append(f"Vy: {info['vy']:+.3f}")
         if "vyaw" in info:
             lines.append(f"Vyaw: {info['vyaw']:+.3f}")
+        if all(k in info for k in ("err_x", "err_y", "err_yaw")):
+            lines.append(
+                f"Err: {info['err_x']:+.1f} {info['err_y']:+.1f} {info['err_yaw']:+.2f}"
+            )
+        if all(k in info for k in ("p_x", "p_y", "p_yaw")):
+            lines.append(
+                f"P: {info['p_x']:+.3f} {info['p_y']:+.3f} {info['p_yaw']:+.3f}"
+            )
+        if all(k in info for k in ("d_x", "d_y", "d_yaw")):
+            lines.append(
+                f"D: {info['d_x']:+.3f} {info['d_y']:+.3f} {info['d_yaw']:+.3f}"
+            )
+        if "source_fps" in info:
+            lines.append(f"SrcFPS: {info['source_fps']:.1f}")
+        if "read_fps" in info:
+            lines.append(f"Read/s: {info['read_fps']:.1f}")
         if "fps" in info:
             lines.append(f"FPS: {info['fps']:.1f}")
         if "dt" in info:
@@ -188,7 +208,13 @@ class DebugVisualizer:
             return frame
 
         bg_h = len(lines) * self._HUD_LINE_HEIGHT + self._HUD_PAD * 2
-        bg_w = self._HUD_WIDTH
+        max_text_w = max(
+            cv2.getTextSize(
+                line, self._HUD_FONT, self._HUD_FONT_SCALE, self._HUD_FONT_THICKNESS,
+            )[0][0]
+            for line in lines
+        )
+        bg_w = min(frame.shape[1], max(self._HUD_WIDTH, max_text_w + self._HUD_PAD * 2))
 
         overlay = frame.copy()
         cv2.rectangle(overlay, (0, 0), (bg_w, bg_h), (0, 0, 0), -1)

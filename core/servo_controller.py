@@ -70,6 +70,17 @@ class VisualServoController:
         Returns:
             (vx, vy, omega_z) — 限幅后的机体系期望速度
         """
+        debug = self.compute_debug(target_pose, center_u, center_v, dt)
+        return debug["velocities"]
+
+    def compute_debug(
+        self,
+        target_pose: dict,
+        center_u: float,
+        center_v: float,
+        dt: float,
+    ) -> dict:
+        """Compute PD output and return intermediate terms for HUD/debugging."""
         error_x, error_y = pixel_to_body_error(
             target_pose["u"], target_pose["v"],
             center_u, center_v,
@@ -84,6 +95,8 @@ class VisualServoController:
         ]
 
         velocities = [0.0] * self._AXIS_COUNT
+        p_terms = [0.0] * self._AXIS_COUNT
+        d_terms = [0.0] * self._AXIS_COUNT
         for i in range(self._AXIS_COUNT):
             p_term = self._kp[i] * errors[i]
 
@@ -92,6 +105,8 @@ class VisualServoController:
             else:
                 d_term = 0.0
 
+            p_terms[i] = p_term
+            d_terms[i] = d_term
             velocities[i] = p_term + d_term
 
         self._prev_errors = list(errors)
@@ -100,7 +115,15 @@ class VisualServoController:
         vy = clamp(velocities[1], -self._max_vel[1], self._max_vel[1])
         omega_z = clamp(velocities[2], -self._max_vel[2], self._max_vel[2])
 
-        return (vx, vy, omega_z)
+        return {
+            "raw_errors": tuple(raw_errors),
+            "errors": tuple(errors),
+            "p_terms": tuple(p_terms),
+            "d_terms": tuple(d_terms),
+            "velocities_raw": tuple(velocities),
+            "velocities": (vx, vy, omega_z),
+            "dt": dt,
+        }
 
     def reset(self) -> None:
         self._prev_errors = [0.0] * self._AXIS_COUNT
