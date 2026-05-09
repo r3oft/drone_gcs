@@ -21,11 +21,11 @@ logger = logging.getLogger("FlightBridge")
 class FlightConfig:
     """飞行控制配置项"""
     connection_string: str = "tcp:127.0.0.1:5760"  # 飞控连接串
-    heartbeat_timeout: int = 15  # 连接心跳超时(s)
+    heartbeat_timeout: int = 60  # 连接心跳超时(s)
     takeoff_timeout_s: int = 30  # 起飞超时(s)
     land_timeout_s: int = 60  # 降落超时(s)
     land_detect_alt: float = 0.1  # 触地检测高度(m)
-    pixhawk_baud: int = 115200  # Pixhawk 串口波特率
+    pixhawk_baud: int = 57600  # Pixhawk 串口波特率
     mcu_serial_port: int = 4  # Pico 2 连接的 Pixhawk UART 端口
     mcu_baudrate: int = 115200  # Pico 2 波特率
 
@@ -47,13 +47,27 @@ class FlightBridge(IFlightBridge):
             self._vehicle.close()
 
         try:
-            # 建立连接（阻塞等待就绪）
+            # 第一步：快速连接（不等参数）
+            logger.info(f"正在连接: {self.config.connection_string}")
             self._vehicle = dronekit.connect(
                 self.config.connection_string,
-                wait_ready=True,
+                wait_ready=False,  # 改成 False
                 heartbeat_timeout=self.config.heartbeat_timeout,
                 baud=self.config.pixhawk_baud   
             )
+            
+            logger.info("心跳已就绪，开始拉取参数...")
+
+            try:
+                logger.info("尝试拉取参数...")
+                self._vehicle.wait_ready(timeout=120)
+                logger.info("参数拉取成功")
+            except Exception as param_err:
+                logger.warning(f"参数拉取失败，但继续使用：{param_err}")
+            
+            # 第二步：手动等待参数就绪（时间更宽松）
+            # self._vehicle.wait_ready(timeout=90)
+            
             # 注册心跳监听
             @self._vehicle.on_message('HEARTBEAT')
             def _on_heartbeat(self, name, msg):
@@ -92,11 +106,11 @@ class FlightBridge(IFlightBridge):
 
         # 1. 等待飞控初始化完成
         logger.info("等待飞控初始化...")
-        while not vehicle.is_armable:
-            if time.time() - start_time > self.config.takeoff_timeout_s:
-                logger.error("起飞超时：飞控未就绪")
-                return False
-            time.sleep(1)
+        # while not vehicle.is_armable:
+        #     if time.time() - start_time > self.config.takeoff_timeout_s:
+        #         logger.error("起飞超时：飞控未就绪")
+        #         return False
+        #     time.sleep(1)
 
         # 2. 设置 GUIDED 模式
         logger.info("切换到 GUIDED 模式...")
@@ -119,52 +133,119 @@ class FlightBridge(IFlightBridge):
         # 4. 执行起飞
         logger.info(f"起飞到目标高度：{target_alt}m")
         vehicle.simple_takeoff(target_alt)
+            
 
         # 5. 等待到达目标高度
-        while True:
-            # 检查超时
-            if time.time() - start_time > self.config.takeoff_timeout_s:
-                logger.error(f"起飞超时：{self.config.takeoff_timeout_s}s 未到达目标高度")
-                return False
+        # while True:
+        #     # 检查超时
+        #     if time.time() - start_time > self.config.takeoff_timeout_s:
+        #         logger.error(f"起飞超时：{self.config.takeoff_timeout_s}s 未到达目标高度")
+        #         return False
 
-            # 获取当前相对高度
-            current_alt = vehicle.location.global_relative_frame.alt
-            logger.debug(f"当前高度：{current_alt:.2f}m / 目标高度：{target_alt}m")
+        #     # 获取当前相对高度
+        #     current_alt = vehicle.location.global_relative_frame.alt
+        #     logger.debug(f"当前高度：{current_alt:.2f}m / 目标高度：{target_alt}m")
 
-            # 高度达标（95%）则返回成功
-            if current_alt >= target_alt * 0.95:
-                logger.info(f"到达目标高度：{current_alt:.2f}m")
-                return True
+        #     # 高度达标（95%）则返回成功
+        #     if current_alt >= target_alt * 0.95:
+        #         logger.info(f"到达目标高度：{current_alt:.2f}m")
+        #         return True
 
-            time.sleep(0.5)
+        #     time.sleep(0.5)
 
     def send_body_velocity(
         self, vx: float, vy: float, vz: float, yaw_rate: float
     ) -> None:
         """
         发送机体坐标系速度指令（MAV_FRAME_BODY_NED）
-        type_mask=0x07C7 → 仅控制速度和偏航角速度
+
+        type_mask 位定义（bit=1 表示忽略该字段）：
+        bit 0-2: 位置 x, y, z
+        bit 3-5: 速度 vx, vy, vz
+        bit 6-8: 加速度 ax, ay, az
+        bit 9:   force
+        bit 10:  偏航角 yaw
+        bit 11:  偏航角速度 yaw_rate
+
+        0x0FC7 = 0000 1111 1100 0111
+        = 忽略位置(0-2)、加速度(6-8)、force(9)、偏航角(10)
+        = 仅使用速度(3-5) + 偏航角速度(11)
+
+        注意：ArduCopter 3.6.x 对 MAV_FRAME_BODY_NED 支持有限，
+        如果不工作，建议升级到 4.x 或使用 MAV_FRAME_BODY_OFFSET_NED
         """
         if not self.is_connected():
             logger.error("无法发送速度指令：飞控未连接")
             return
 
         vehicle = self._vehicle
+
+        # 检查飞行模式（速度控制需要 GUIDED 模式）
+        if vehicle.mode.name not in ["GUIDED", "GUIDED_NOGPS"]:
+            logger.warning(f"当前模式 {vehicle.mode.name} 可能不支持速度控制，建议切换到 GUIDED")
+
         # 构造 SET_POSITION_TARGET_LOCAL_NED 消息
+        # 参考：https://mavlink.io/en/messages/common.html#SET_POSITION_TARGET_LOCAL_NED
         msg = vehicle.message_factory.set_position_target_local_ned_encode(
-            0,  # 时间戳（未使用）
-            0, 0,  # 目标系统/组件
-            mavutil.mavlink.MAV_FRAME_BODY_NED,  # 机体坐标系（NED）
-            0x07C7,  # type_mask：忽略位置/加速度/合力，仅保留速度+偏航角速度
-            0, 0, 0,  # x/y/z 位置（忽略）
-            vx, vy, vz,  # x/y/z 速度（m/s）
-            0, 0, 0,  # x/y/z 加速度（忽略）
-            0, yaw_rate  # 偏航角、偏航角速度（rad/s）
+            0,  # time_boot_ms (not used)
+            0, 0,  # target system, target component
+            mavutil.mavlink.MAV_FRAME_BODY_OFFSET_NED,  # 使用 BODY_OFFSET_NED（兼容性更好）
+            0x0FC7,  # type_mask: 仅使用速度 + 偏航角速度
+            0, 0, 0,  # x, y, z positions (ignored)
+            vx, vy, vz,  # x, y, z velocity in m/s
+            0, 0, 0,  # x, y, z acceleration (ignored)
+            0,       # yaw (ignored)
+            yaw_rate # yaw_rate in rad/s
         )
         # 发送消息（非阻塞）
         vehicle.send_mavlink(msg)
         vehicle.flush()
         logger.debug(f"发送速度指令：vx={vx}, vy={vy}, vz={vz}, yaw_rate={yaw_rate}")
+
+    def send_attitude_target(
+        self,
+        roll_rate: float,
+        pitch_rate: float,
+        yaw_rate: float,
+        thrust: float
+    ) -> None:
+        """
+        发送姿态控制（推荐：角速度 + thrust）
+
+        参数：
+        - roll_rate, pitch_rate, yaw_rate: rad/s
+        - thrust: 0~1（0.5≈悬停）
+        """
+
+        if not self.is_connected():
+            logger.error("飞控未连接")
+            return
+
+        vehicle = self._vehicle
+
+        if vehicle.mode.name not in ["GUIDED", "GUIDED_NOGPS"]:
+            logger.warning(f"当前模式 {vehicle.mode.name} 不适合姿态控制")
+
+        try:
+            # 忽略姿态，仅使用角速度
+            type_mask = 0b00000111  # = 7
+
+            msg = vehicle.message_factory.set_attitude_target_encode(
+                0,      # time_boot_ms
+                0, 0,   # target system/component
+                type_mask,
+                [1, 0, 0, 0],  # 必填，但会被忽略
+                roll_rate,
+                pitch_rate,
+                yaw_rate,
+                thrust
+            )
+
+            vehicle.send_mavlink(msg)
+            vehicle.flush()
+
+        except Exception as e:
+            logger.error(f"发送姿态指令失败: {e}", exc_info=True)
 
     def land(self) -> bool:
         """
@@ -211,7 +292,7 @@ class FlightBridge(IFlightBridge):
         """
         切换飞行模式
         """
-        valid_modes = ["GUIDED", "LOITER", "RTL"]
+        valid_modes = ["GUIDED", "LOITER", "RTL", "GUIDED_NOGPS"]
         if mode not in valid_modes:
             logger.error(f"无效模式：{mode}，仅支持 {valid_modes}")
             return False
