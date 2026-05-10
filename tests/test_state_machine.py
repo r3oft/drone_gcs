@@ -11,6 +11,9 @@ from core.state_machine import FlightState, GlobalFSM
 from core.interfaces import MCUCommand, MCUResponse, FlightMode
 
 
+DUMMY_FRAME = object()
+
+
 # ═══════════════════════════════════════════════════════
 #  Stub 替身（轻量级测试 Mock）
 # ═══════════════════════════════════════════════════════
@@ -222,29 +225,29 @@ class TestResetToInbound:
     def test_reset_to_inbound(self, fsm, flight, mcu):
         # 进入 RESET
         fsm.request_start()
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.RESET
 
         # 第一个 tick: 执行连接 + MCU RESET
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert MCUCommand.RESET in mcu.command_log
 
         # 第二个 tick: 心跳 OK + RESET_DONE → INBOUND
         mcu.set_responses(MCUResponse.RESET_DONE)
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.INBOUND
 
     def test_reset_timeout_to_emergency(self, fsm, flight, mcu):
         fsm.request_start()
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.RESET
 
         # 首次 tick 触发连接
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
 
         # 模拟超时：将进入时间设到很久以前
         fsm._state_enter_time = time.time() - 60
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.EMERGENCY
 
 
@@ -254,13 +257,13 @@ class TestInboundToAlign:
     def test_inbound_to_task_rec_align(self, fsm, flight):
         advance_to_state(fsm, flight, None, FlightState.INBOUND)
         flight.takeoff_return = True
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.TASK_REC_ALIGN
 
     def test_inbound_takeoff_fail(self, fsm, flight):
         advance_to_state(fsm, flight, None, FlightState.INBOUND)
         flight.takeoff_return = False
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.EMERGENCY
 
 
@@ -273,13 +276,13 @@ class TestAlignDebounce:
         controller.velocity = (0.0, 0.0, 0.0)
 
         # 第一个 tick：启动计时器
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.TASK_REC_ALIGN
         assert fsm._align_stable_start > 0
 
         # 模拟 1.5s 前已经开始稳定
         fsm._align_stable_start = time.time() - 2.0
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.TASK_REC_DESCEND
         assert controller.reset_count >= 1
 
@@ -289,12 +292,12 @@ class TestAlignDebounce:
         controller.velocity = (0.0, 0.0, 0.0)
 
         # 启动计时器
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert fsm._align_stable_start > 0
 
         # 速度变非零
         controller.velocity = (0.1, 0.0, 0.0)
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert fsm._align_stable_start == 0.0
         assert fsm.state == FlightState.TASK_REC_ALIGN
 
@@ -310,7 +313,7 @@ class TestTargetLost:
         # 模拟 1.5s 前最后看到目标
         fsm._last_target_seen = time.time() - 1.5
         flight.velocity_log.clear()
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
 
         assert len(flight.velocity_log) == 1
         assert flight.velocity_log[0] == (0, 0, 0, 0)
@@ -323,7 +326,7 @@ class TestTargetLost:
         # 模拟 4s 前最后看到目标
         fsm._last_target_seen = time.time() - 4.0
         flight.velocity_log.clear()
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
 
         assert len(flight.velocity_log) == 1
         vx, vy, vz, yaw = flight.velocity_log[0]
@@ -338,14 +341,14 @@ class TestDescendToWaitLoad:
     def test_descend_to_wait_load(self, fsm, flight):
         advance_to_state(fsm, flight, None, FlightState.TASK_REC_DESCEND)
         flight._telemetry["alt"] = 0.1  # 低于 land_detect_alt (0.15)
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.TASK_REC_WAIT_LOAD
 
     def test_descend_continues_above_threshold(self, fsm, flight, controller):
         advance_to_state(fsm, flight, None, FlightState.TASK_REC_DESCEND)
         flight._telemetry["alt"] = 1.0
         controller.velocity = (0.1, 0.05, 0.0)
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.TASK_REC_DESCEND
         # 验证半速纠偏 + 下降速度
         assert len(flight.velocity_log) > 0
@@ -363,7 +366,7 @@ class TestGrabFlow:
         advance_to_state(fsm, flight, mcu, FlightState.TASK_REC_WAIT_LOAD)
 
         # 首次 tick: 发送 START_GRAB
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert MCUCommand.START_GRAB in mcu.command_log
 
         # 第二次 tick: 收到 GRAB_DONE
@@ -554,36 +557,36 @@ class TestFullHappyPath:
 
         # TASK_REC_ALIGN: 速度为零，触发防抖跃迁
         controller.velocity = (0.0, 0.0, 0.0)
-        fsm.tick(None)  # 启动计时
+        fsm.tick(DUMMY_FRAME)  # 启动计时
         fsm._align_stable_start = time.time() - 2.0  # 模拟已稳定 2s
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.TASK_REC_DESCEND
 
         # TASK_REC_DESCEND → TASK_REC_WAIT_LOAD
         flight._telemetry["alt"] = 0.1
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.TASK_REC_WAIT_LOAD
 
         # TASK_REC_WAIT_LOAD: START_GRAB → GRAB_DONE
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         mcu.set_responses(MCUResponse.GRAB_DONE)
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.TRANS_DELIVERY
 
         # TRANS_DELIVERY: 起飞 + 定距转移
         flight._telemetry["alt"] = 1.5
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert fsm._transfer_takeoff_done is True
         fsm._transfer_start_time = time.time() - 11  # 模拟飞行 11s
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.TASK_REL_ALIGN
 
         # TASK_REL_ALIGN → TASK_REL_DESCEND
         controller.velocity = (0.0, 0.0, 0.0)
         fsm._last_target_seen = time.time()
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         fsm._align_stable_start = time.time() - 2.0
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.TASK_REL_DESCEND
 
         # TASK_REL_DESCEND → TASK_REL_RELEASE
@@ -619,7 +622,7 @@ class TestRelAlignDescendSymmetry:
             return original_pf(frame, cls_id)
 
         perception.process_frame = tracking_pf
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
         assert 1 in calls
 
     def test_rel_descend_to_release(self, fsm, flight):
@@ -661,7 +664,7 @@ class TestFirstFrameTargetLoss:
         advance_to_state(fsm, flight, None, FlightState.TASK_REC_ALIGN)
         perception.target = None
         flight.velocity_log.clear()
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
 
         # 不应有爬升速度 (vz == climb_vz == -0.2)
         if len(flight.velocity_log) > 0:
@@ -673,11 +676,26 @@ class TestFirstFrameTargetLoss:
         advance_to_state(fsm, flight, None, FlightState.TASK_REL_ALIGN)
         perception.target = None
         flight.velocity_log.clear()
-        fsm.tick(None)
+        fsm.tick(DUMMY_FRAME)
 
         if len(flight.velocity_log) > 0:
             vz = flight.velocity_log[0][2]
             assert vz != -0.2, "首帧无目标不应触发爬升搜索"
+
+    def test_missing_frame_is_treated_as_target_loss(self, fsm, flight, perception):
+        """视觉状态没有新帧时，不应调用感知模块导致异常。"""
+        advance_to_state(fsm, flight, None, FlightState.TASK_REC_ALIGN)
+
+        def fail_if_called(frame, cls_id):
+            raise AssertionError("process_frame should not be called without a frame")
+
+        perception.process_frame = fail_if_called
+        flight.velocity_log.clear()
+
+        fsm._last_target_seen = time.time() - 1.5
+        fsm.tick(None)
+
+        assert flight.velocity_log[-1] == (0, 0, 0, 0)
 
 
 class TestMCUSendFailure:

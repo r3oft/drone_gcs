@@ -278,7 +278,7 @@ class GlobalFSM:
             (vx, vy, vyaw) 速度输出，或 None（目标丢失，已由内部处理悬停/爬升）
         """
         cls_id = self._get_target_cls_id()
-        target = self._perception.process_frame(frame, cls_id)
+        target = None if frame is None else self._perception.process_frame(frame, cls_id)
 
         if target is None:
             elapsed = now - self._last_target_seen

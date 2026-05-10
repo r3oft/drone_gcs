@@ -38,6 +38,7 @@ servo:
 # ======== M4：MAVLink 通信 ========
 mavlink:
   connection: "udp:192.168.4.1:14550"            # 飞控 UDP 链路
+  baud: 57600                                    # 串口数传波特率（UDP 时忽略）
   heartbeat_timeout_s: 5                         # 心跳超时（秒）
   reconnect_enabled: true                        # 心跳超时后自动重连
   reconnect_max_attempts: 3                      # 每次检测触发的最大重连次数
@@ -87,6 +88,8 @@ flight:
 
 # ======== MCU 通信（MCUBridge 使用） ========
 mcu:
+  serial_port: 4                 # Pico 2 所在 Pixhawk UART 号，发送时映射到 MAVLink SERIAL_CONTROL enum
+  baudrate: 115200               # Pico 2 串口波特率
   grab_timeout_s: 10            # 等待 GRAB_DONE 响应超时 (s)
   release_timeout_s: 10         # 等待 RELEASE_DONE 响应超时 (s)
   retry_max: 2                  # 动作失败最大重试次数
