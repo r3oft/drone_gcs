@@ -60,40 +60,75 @@ class TargetPoseEstimator:
             或 None（未检测到符合条件的目标）。
             theta 已经过 C₂ 对称归一化，范围 [-π/4, π/4]。
         """
+        targets = self.process_frame_all(frame, target_cls_ids=[target_cls_id])
+        target = targets.get(int(target_cls_id))
+        if target is None:
+            return None
+
+        return {
+            "u":     target["u"],
+            "v":     target["v"],
+            "theta": target["theta"],
+            "conf":  target["conf"],
+            "w":     target["w"],
+            "h":     target["h"],
+        }
+
+    def process_frame_all(
+        self,
+        frame: np.ndarray,
+        target_cls_ids: list[int] | tuple[int, ...] | set[int] | None = None,
+    ) -> dict[int, dict]:
+        """
+        单次 YOLO 推理中提取多个类别的最高置信 OBB 目标。
+
+        Args:
+            frame:          BGR 图像帧（H×W×3，np.uint8）
+            target_cls_ids: 需要保留的类别 ID 集合。为 None 时返回所有类别。
+
+        Returns:
+            {cls_id: pose_dict}。每个类别最多返回一个最高置信目标。
+            pose_dict 包含 {"cls_id", "u", "v", "theta", "conf", "w", "h"}。
+        """
         results = self._model(frame, verbose=False, device=self._device)
         obb = results[0].obb
 
         if obb is None or len(obb) == 0:
-            return None
+            return {}
 
         xywhr = obb.xywhr.cpu().numpy()    # [N, 5]: cx, cy, w, h, rotation_rad
         confs = obb.conf.cpu().numpy()      # [N]
-        classes = obb.cls.cpu().numpy()     # [N]
+        classes = obb.cls.cpu().numpy().astype(int)  # [N]
 
-        cls_mask = classes == target_cls_id
-        if not np.any(cls_mask):
-            return None
+        allowed_cls_ids = (
+            {int(cls_id) for cls_id in target_cls_ids}
+            if target_cls_ids is not None else None
+        )
+        targets: dict[int, dict] = {}
 
-        xywhr = xywhr[cls_mask]
-        confs = confs[cls_mask]
+        for cls_id in sorted(set(classes.tolist())):
+            if allowed_cls_ids is not None and cls_id not in allowed_cls_ids:
+                continue
 
-        conf_mask = confs >= self._conf_threshold
-        if not np.any(conf_mask):
-            return None
+            mask = (classes == cls_id) & (confs >= self._conf_threshold)
+            if not np.any(mask):
+                continue
 
-        xywhr = xywhr[conf_mask]
-        confs = confs[conf_mask]
+            cls_xywhr = xywhr[mask]
+            cls_confs = confs[mask]
+            best_idx = int(np.argmax(cls_confs))
+            cx, cy, w, h, theta_raw = cls_xywhr[best_idx]
+            best_conf = float(cls_confs[best_idx])
+            theta = normalize_obb_angle(float(theta_raw), symmetry_order=2)
 
-        best_idx = np.argmax(confs)
-        cx, cy, w, h, theta_raw = xywhr[best_idx]
-        best_conf = float(confs[best_idx])
-        theta = normalize_obb_angle(float(theta_raw), symmetry_order=2)
+            targets[cls_id] = {
+                "cls_id": cls_id,
+                "u":      float(cx),
+                "v":      float(cy),
+                "theta":  theta,
+                "conf":   best_conf,
+                "w":      float(w),
+                "h":      float(h),
+            }
 
-        return {
-            "u":     float(cx),
-            "v":     float(cy),
-            "theta": theta,
-            "conf":  best_conf,
-            "w":     float(w),
-            "h":     float(h),
-        }
+        return targets

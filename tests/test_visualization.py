@@ -63,6 +63,18 @@ class TestInit:
         assert os.path.isdir(snap_dir)
         assert viz._snapshot_dir == snap_dir
 
+    def test_t4b_hud_corner_validation(self):
+        """T4b — HUD 位置参数校验。"""
+        viz = DebugVisualizer(hud_corner="top_right")
+        assert viz._hud_corner == "top_right"
+        with pytest.raises(ValueError):
+            DebugVisualizer(hud_corner="center")
+
+    def test_t4c_record_segment_validation(self):
+        """T4c — 分段录制参数校验。"""
+        with pytest.raises(ValueError):
+            DebugVisualizer(record_segment_s=-1)
+
 
 # =====================================================================
 #  T5–T10：draw_obb 绘制验证
@@ -172,6 +184,15 @@ class TestDrawHud:
         viz.draw_hud(black_frame, {"camera": "delivery_cam", "target": "delivery_zone"})
         assert frame_modified(black_frame)
 
+    def test_t17b_bottom_right_hud_position(self):
+        """T17b — HUD 可绘制在右下角以减少遮挡。"""
+        frame = np.zeros((240, 320, 3), dtype=np.uint8)
+        viz = DebugVisualizer(hud_corner="bottom_right")
+        viz.draw_hud(frame, {"state": "VISUAL_HUD", "mode": "stream", "fps": 15.0})
+
+        assert np.any(frame[160:, 180:] != 0)
+        assert not np.any(frame[:80, :120] != 0)
+
 
 # =====================================================================
 #  T18–T21：write_frame() 与 release()
@@ -217,6 +238,53 @@ class TestWriteFrameAndRelease:
         cap.release()
 
         assert count == num_frames
+
+    def test_t19b_segmented_recording_creates_readable_files(self, tmp_path):
+        """T19b — 分段录制会生成多个已 finalize 的可读视频文件。"""
+        video_path = str(tmp_path / "segmented.avi")
+        viz = DebugVisualizer(record_path=video_path, record_segment_s=0.2)
+
+        for i in range(7):
+            frame = np.zeros((120, 160, 3), dtype=np.uint8)
+            cv2.putText(
+                frame, str(i), (20, 70), cv2.FONT_HERSHEY_SIMPLEX,
+                1.0, (255, 255, 255), 2, cv2.LINE_AA,
+            )
+            viz.write_frame(frame)
+
+        viz.release()
+
+        segments = sorted(tmp_path.glob("segmented_seg*.avi"))
+        assert len(segments) >= 3
+
+        for segment in segments:
+            assert segment.stat().st_size > 0
+            cap = cv2.VideoCapture(str(segment))
+            assert cap.isOpened()
+            ok, frame = cap.read()
+            cap.release()
+            assert ok
+            assert frame is not None
+
+    def test_t19c_flush_recording_finalizes_current_segment(self, tmp_path):
+        """T19c — 断流时 flush 当前片段，恢复后写入下一段。"""
+        video_path = str(tmp_path / "gap.avi")
+        viz = DebugVisualizer(record_path=video_path, record_segment_s=60)
+        frame = np.ones((120, 160, 3), dtype=np.uint8) * 128
+
+        viz.write_frame(frame)
+        viz.write_frame(frame)
+        viz.flush_recording()
+        first_segments = sorted(tmp_path.glob("gap_seg*.avi"))
+        assert len(first_segments) == 1
+        cap = cv2.VideoCapture(str(first_segments[0]))
+        assert cap.isOpened()
+        cap.release()
+
+        viz.write_frame(frame)
+        viz.release()
+        segments = sorted(tmp_path.glob("gap_seg*.avi"))
+        assert len(segments) == 2
 
     def test_t20_release_idempotent(self, viz):
         """T20 — release() 后再次 release() → 幂等，不崩溃。"""

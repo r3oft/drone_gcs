@@ -319,14 +319,63 @@ class TestClassIsolation:
 
 
 # =====================================================================
-#  T18：集成测试（从 default.yaml 读取参数）
+#  T18–T20：process_frame_all — 单次推理返回多类别
+# =====================================================================
+
+class TestProcessFrameAll:
+    """process_frame_all 多类别检测测试。"""
+
+    def test_t18_returns_best_target_for_each_class(self, estimator, frame):
+        """T18 — 同帧 cls=0/1 均达阈值 → 两类都返回最高置信目标。"""
+        estimator._model.return_value = make_obb_result([
+            {"cx": 100, "cy": 100, "w": 50, "h": 50, "theta": 0.0, "conf": 0.70, "cls": 0},
+            {"cx": 320, "cy": 240, "w": 90, "h": 60, "theta": 0.1, "conf": 0.95, "cls": 0},
+            {"cx": 400, "cy": 300, "w": 80, "h": 80, "theta": 0.2, "conf": 0.88, "cls": 1},
+        ])
+
+        results = estimator.process_frame_all(frame, target_cls_ids=[0, 1])
+
+        assert set(results) == {0, 1}
+        assert results[0]["cls_id"] == 0
+        assert results[0]["u"] == pytest.approx(320.0)
+        assert results[0]["conf"] == pytest.approx(0.95, abs=1e-2)
+        assert results[1]["cls_id"] == 1
+        assert results[1]["u"] == pytest.approx(400.0)
+        assert results[1]["conf"] == pytest.approx(0.88, abs=1e-2)
+
+    def test_t19_respects_target_cls_filter(self, estimator, frame):
+        """T19 — target_cls_ids 只包含 cls=1 时忽略 cls=0。"""
+        estimator._model.return_value = make_obb_result([
+            {"cx": 100, "cy": 100, "w": 50, "h": 50, "theta": 0.0, "conf": 0.95, "cls": 0},
+            {"cx": 400, "cy": 300, "w": 80, "h": 80, "theta": 0.2, "conf": 0.88, "cls": 1},
+        ])
+
+        results = estimator.process_frame_all(frame, target_cls_ids=[1])
+
+        assert set(results) == {1}
+        assert results[1]["u"] == pytest.approx(400.0)
+
+    def test_t20_omits_classes_below_threshold(self, estimator, frame):
+        """T20 — 类别存在但置信度低于阈值时不返回该类。"""
+        estimator._model.return_value = make_obb_result([
+            {"cx": 100, "cy": 100, "w": 50, "h": 50, "theta": 0.0, "conf": 0.95, "cls": 0},
+            {"cx": 400, "cy": 300, "w": 80, "h": 80, "theta": 0.2, "conf": 0.30, "cls": 1},
+        ])
+
+        results = estimator.process_frame_all(frame, target_cls_ids=[0, 1])
+
+        assert set(results) == {0}
+
+
+# =====================================================================
+#  T21：集成测试（从 default.yaml 读取参数）
 # =====================================================================
 
 class TestIntegrationWithConfig:
     """集成级测试 — 验证与 default.yaml 配置参数的兼容性。"""
 
-    def test_t18_config_instantiation(self):
-        """T18 — 用 default.yaml 参数构造（mock YOLO）。"""
+    def test_t21_config_instantiation(self):
+        """T21 — 用 default.yaml 参数构造（mock YOLO）。"""
         from utils.config_manager import ConfigManager
 
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

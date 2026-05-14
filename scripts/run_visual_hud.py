@@ -23,6 +23,19 @@ TARGETS = {
     "pickup_zone": 0,
     "delivery_zone": 1,
 }
+TARGET_LABELS = {cls_id: name for name, cls_id in TARGETS.items()}
+
+
+def split_record_paths(record_path: str | None) -> tuple[str | None, str | None]:
+    """Return (with_hud_path, non_hud_path) under the requested record directory."""
+    if record_path is None:
+        return None, None
+
+    path = Path(record_path)
+    return (
+        str(path.parent / "with_hud" / path.name),
+        str(path.parent / "non_hud" / path.name),
+    )
 
 
 def opencv_has_gui() -> bool:
@@ -75,6 +88,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--conf-threshold", type=float, default=None)
 
     parser.add_argument("--target", choices=sorted(TARGETS), default="pickup_zone")
+    parser.add_argument(
+        "--draw-targets",
+        choices=("all", "selected"),
+        default="all",
+        help="Draw all configured classes, or only the active --target class.",
+    )
     parser.add_argument("--servo-profile", choices=("pickup_align", "delivery_align"), default=None)
     parser.add_argument("--infer-hz", type=float, default=15.0)
     parser.add_argument("--output-hz", type=float, default=15.0)
@@ -90,8 +109,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--display", action="store_true", help="Use cv2.imshow when GUI OpenCV is available")
     parser.add_argument("--window-name", default="Drone GCS Visual HUD")
     parser.add_argument("--record-path", default=None)
+    parser.add_argument(
+        "--record-segment-s",
+        type=float,
+        default=0.0,
+        help="Split recording into finalized AVI segments; 0 keeps one file.",
+    )
+    parser.add_argument(
+        "--record-flush-on-gap-s",
+        type=float,
+        default=2.0,
+        help="When segment recording is enabled, finalize the current segment after this many seconds without frames.",
+    )
     parser.add_argument("--snapshot-dir", default=None)
     parser.add_argument("--snapshot-every-s", type=float, default=0.0)
+    parser.add_argument(
+        "--hud-corner",
+        choices=("top_left", "top_right", "bottom_left", "bottom_right"),
+        default="top_left",
+    )
     parser.add_argument("--report-interval-s", type=float, default=1.0)
     parser.add_argument("--detection-stale-s", type=float, default=0.5)
 
@@ -133,14 +169,20 @@ def main() -> None:
         print("WARN: OpenCV was built without GUI support; disabling --display.")
         display_enabled = False
 
+    with_hud_record_path, non_hud_record_path = split_record_paths(args.record_path)
+
     print("=== Visual HUD runner ===")
     print(f"  target          : {args.target} (cls_id={target_cls_id})")
+    print(f"  draw_targets    : {args.draw_targets}")
     print(f"  weights         : {weights_path}")
     print(f"  device          : {device}")
     print(f"  conf_threshold  : {conf_threshold}")
     print(f"  servo_profile   : {servo_profile}")
     print(f"  display         : {display_enabled}")
     print(f"  record_path     : {args.record_path}")
+    print(f"  with_hud_path   : {with_hud_record_path}")
+    print(f"  non_hud_path    : {non_hud_record_path}")
+    print(f"  record_segment_s: {args.record_segment_s}")
     print()
 
     streamer = ZeroLatencyStreamer(
@@ -155,9 +197,15 @@ def main() -> None:
         stream_fail_threshold=int(config.get("stream.stream_fail_threshold", 5)),
         stream_preflight=args.stream_preflight,
     )
+    raw_visualizer = DebugVisualizer(
+        record_path=non_hud_record_path,
+        record_segment_s=args.record_segment_s,
+    )
     visualizer = DebugVisualizer(
-        record_path=args.record_path,
+        record_path=with_hud_record_path,
         snapshot_dir=args.snapshot_dir,
+        hud_corner=args.hud_corner,
+        record_segment_s=args.record_segment_s,
     )
     estimator = TargetPoseEstimator(
         weights_path=str(weights_path),
@@ -178,7 +226,11 @@ def main() -> None:
     source_fps = 0.0
     read_fps = 0.0
     final_mode = "closed"
+    last_record_write_time = start_time
+    recording_flushed_for_gap = False
     latest_pose: dict | None = None
+    latest_targets: dict[int, dict] = {}
+    latest_targets_time = 0.0
     latest_debug: dict | None = None
     latest_velocity = (0.0, 0.0, 0.0)
     latest_detection_time = 0.0
@@ -195,6 +247,15 @@ def main() -> None:
             frame = streamer.get_latest_frame()
             if frame is None:
                 total_none += 1
+                if (
+                    args.record_segment_s > 0
+                    and args.record_flush_on_gap_s > 0
+                    and not recording_flushed_for_gap
+                    and now - last_record_write_time >= args.record_flush_on_gap_s
+                ):
+                    raw_visualizer.flush_recording()
+                    visualizer.flush_recording()
+                    recording_flushed_for_gap = True
                 time.sleep(0.01)
                 continue
 
@@ -221,7 +282,27 @@ def main() -> None:
             if should_infer:
                 infer_dt = now - last_infer_time if last_infer_time > 0 else 0.0
                 last_infer_time = now
-                latest_pose = estimator.process_frame(frame, target_cls_id=target_cls_id)
+                if args.draw_targets == "all":
+                    latest_targets = estimator.process_frame_all(
+                        frame,
+                        target_cls_ids=list(TARGETS.values()),
+                    )
+                    latest_pose = latest_targets.get(target_cls_id)
+                else:
+                    latest_pose = estimator.process_frame(
+                        frame,
+                        target_cls_id=target_cls_id,
+                    )
+                    latest_targets = (
+                        {target_cls_id: latest_pose}
+                        if latest_pose is not None else {}
+                    )
+
+                if latest_targets:
+                    latest_targets_time = now
+                else:
+                    latest_targets_time = 0.0
+
                 if latest_pose is not None:
                     latest_debug = controller.compute_debug(
                         latest_pose,
@@ -240,24 +321,37 @@ def main() -> None:
                 latest_pose is not None
                 and now - latest_detection_time <= args.detection_stale_s
             )
-            if pose_is_fresh:
-                color = CLASS_COLORS.get(args.target, CLASS_COLORS["default"])
-                visualizer.draw_obb(
-                    annotated,
-                    u=latest_pose["u"],
-                    v=latest_pose["v"],
-                    w=latest_pose["w"],
-                    h=latest_pose["h"],
-                    theta=latest_pose["theta"],
-                    label=args.target,
-                    conf=latest_pose["conf"],
-                    color=color,
-                )
-                visualizer.draw_error_vector(
-                    annotated,
-                    center=center,
-                    target=(int(round(latest_pose["u"])), int(round(latest_pose["v"]))),
-                )
+            targets_are_fresh = (
+                bool(latest_targets)
+                and now - latest_targets_time <= args.detection_stale_s
+            )
+            if targets_are_fresh:
+                for cls_id, target_pose in sorted(latest_targets.items()):
+                    label = TARGET_LABELS.get(cls_id, f"cls_{cls_id}")
+                    is_control_target = cls_id == target_cls_id
+                    display_label = f"{label} CTRL" if is_control_target else label
+                    color = CLASS_COLORS.get(label, CLASS_COLORS["default"])
+                    visualizer.draw_obb(
+                        annotated,
+                        u=target_pose["u"],
+                        v=target_pose["v"],
+                        w=target_pose["w"],
+                        h=target_pose["h"],
+                        theta=target_pose["theta"],
+                        label=display_label,
+                        conf=target_pose["conf"],
+                        color=color,
+                        thickness=3 if is_control_target else 2,
+                    )
+
+                if pose_is_fresh:
+                    visualizer.draw_error_vector(
+                        annotated,
+                        center=center,
+                        target=(int(round(latest_pose["u"])), int(round(latest_pose["v"]))),
+                    )
+                else:
+                    cv2.drawMarker(annotated, center, (0, 0, 255), cv2.MARKER_CROSS, 16, 1)
             else:
                 cv2.drawMarker(annotated, center, (0, 0, 255), cv2.MARKER_CROSS, 16, 1)
 
@@ -310,7 +404,10 @@ def main() -> None:
                 )
 
             visualizer.draw_hud(annotated, hud)
+            raw_visualizer.write_frame(frame)
             visualizer.write_frame(annotated)
+            last_record_write_time = now
+            recording_flushed_for_gap = False
 
             if args.snapshot_every_s > 0 and now - last_snapshot_time >= args.snapshot_every_s:
                 visualizer.save_frame(annotated, tag=args.target)
@@ -328,6 +425,7 @@ def main() -> None:
     finally:
         final_mode = streamer.current_mode
         streamer.release()
+        raw_visualizer.release()
         visualizer.release()
         if display_enabled:
             cv2.destroyAllWindows()
