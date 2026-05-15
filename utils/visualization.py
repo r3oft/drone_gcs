@@ -208,22 +208,44 @@ class DebugVisualizer:
             target_line.append(f"{info['conf']:.0%}")
         if target_line:
             lines.append(" ".join(target_line))
-        if all(k in info for k in ("vx", "vy", "vyaw")):
+        target_debugs = info.get("target_debugs", [])
+        if all(k in info for k in ("vx", "vy", "vyaw")) and not target_debugs:
             lines.append(
                 f"V {info['vx']:+.3f} {info['vy']:+.3f} {info['vyaw']:+.3f}"
             )
-        if all(k in info for k in ("err_x", "err_y", "err_yaw")):
+        if all(k in info for k in ("err_x", "err_y", "err_yaw")) and not target_debugs:
             lines.append(
                 f"E {info['err_x']:+.1f} {info['err_y']:+.1f} {info['err_yaw']:+.2f}"
             )
-        if all(k in info for k in ("p_x", "p_y", "p_yaw")):
+        if all(k in info for k in ("p_x", "p_y", "p_yaw")) and not target_debugs:
             lines.append(
                 f"P {info['p_x']:+.3f} {info['p_y']:+.3f} {info['p_yaw']:+.3f}"
             )
-        if all(k in info for k in ("d_x", "d_y", "d_yaw")):
+        if all(k in info for k in ("d_x", "d_y", "d_yaw")) and not target_debugs:
             lines.append(
                 f"D {info['d_x']:+.3f} {info['d_y']:+.3f} {info['d_yaw']:+.3f}"
             )
+        for target_debug in target_debugs:
+            label = str(target_debug.get("label", "target"))
+            if label == "pickup_zone":
+                short_label = "PICK"
+            elif label == "delivery_zone":
+                short_label = "DELV"
+            else:
+                short_label = label[:4].upper()
+            active_mark = "*" if target_debug.get("active") else " "
+            prefix = f"{active_mark}{short_label}"
+            if all(k in target_debug for k in ("conf", "vx", "vy", "vyaw")):
+                lines.append(
+                    f"{prefix} {target_debug['conf']:.0%} V "
+                    f"{target_debug['vx']:+.3f} {target_debug['vy']:+.3f} "
+                    f"{target_debug['vyaw']:+.3f}"
+                )
+            if all(k in target_debug for k in ("err_x", "err_y", "err_yaw")):
+                lines.append(
+                    f"{prefix} E {target_debug['err_x']:+.1f} "
+                    f"{target_debug['err_y']:+.1f} {target_debug['err_yaw']:+.2f}"
+                )
         fps_line = []
         if "fps" in info:
             fps_line.append(f"FPS {info['fps']:.1f}")

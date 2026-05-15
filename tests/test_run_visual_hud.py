@@ -116,7 +116,13 @@ class SpyVisualizer(DebugVisualizer):
         super().write_frame(frame)
 
 
-def run_hud_once(monkeypatch, tmp_path, target="pickup_zone", estimator_cls=FakeEstimator):
+def run_hud_once(
+    monkeypatch,
+    tmp_path,
+    target="pickup_zone",
+    estimator_cls=FakeEstimator,
+    debug_targets="selected",
+):
     weights = tmp_path / "fake.pt"
     weights.write_bytes(b"fake weights")
 
@@ -140,6 +146,8 @@ def run_hud_once(monkeypatch, tmp_path, target="pickup_zone", estimator_cls=Fake
             target,
             "--draw-targets",
             "all",
+            "--debug-targets",
+            debug_targets,
             "--duration",
             "0.35",
             "--infer-hz",
@@ -222,6 +230,36 @@ def test_delivery_target_controls_hud_velocity_and_error_arrow(monkeypatch, tmp_
     assert "delivery_zone CTRL" in visualizer.obb_labels
     assert visualizer.error_targets
     assert visualizer.error_targets[0] == (236, 150)
+
+
+def test_debug_targets_all_outputs_velocity_and_arrows_for_both_targets(monkeypatch, tmp_path):
+    _, visualizer = run_hud_once(
+        monkeypatch,
+        tmp_path,
+        target="pickup_zone",
+        debug_targets="all",
+    )
+
+    first_hud = visualizer.hud_infos[0]
+    target_debugs = {
+        target_debug["label"]: target_debug
+        for target_debug in first_hud["target_debugs"]
+    }
+
+    assert first_hud["target"] == "pickup_zone"
+    assert target_debugs["pickup_zone"]["active"] is True
+    assert target_debugs["pickup_zone"]["conf"] == 0.92
+    assert target_debugs["delivery_zone"]["active"] is False
+    assert target_debugs["delivery_zone"]["conf"] == 0.84
+    assert target_debugs["delivery_zone"]["vy"] > 0.0
+    assert target_debugs["delivery_zone"]["vyaw"] > 0.0
+    assert target_debugs["delivery_zone"]["err_y"] == 76.0
+
+    first_frame_targets = visualizer.error_targets[:2]
+    assert len(first_frame_targets) == 2
+    assert first_frame_targets[0][1] == 120
+    assert 160 <= first_frame_targets[0][0] <= 164
+    assert first_frame_targets[1] == (236, 150)
 
 
 def test_missing_active_target_keeps_velocity_zero_without_arrow(monkeypatch, tmp_path):

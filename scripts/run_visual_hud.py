@@ -54,6 +54,10 @@ def cfg_bool(config: ConfigManager, key: str, default: bool) -> bool:
     return bool(config.get(key, default))
 
 
+def default_servo_profile(target_name: str) -> str:
+    return "pickup_align" if target_name == "pickup_zone" else "delivery_align"
+
+
 def make_controller(config: ConfigManager, profile: str) -> VisualServoController:
     base = f"servo.{profile}"
     return VisualServoController(
@@ -93,6 +97,12 @@ def parse_args() -> argparse.Namespace:
         choices=("all", "selected"),
         default="all",
         help="Draw all configured classes, or only the active --target class.",
+    )
+    parser.add_argument(
+        "--debug-targets",
+        choices=("selected", "all"),
+        default="selected",
+        help="Compute and draw velocity/error debug for selected target or all detected targets.",
     )
     parser.add_argument("--servo-profile", choices=("pickup_align", "delivery_align"), default=None)
     parser.add_argument("--infer-hz", type=float, default=15.0)
@@ -162,7 +172,15 @@ def main() -> None:
     )
     servo_profile = args.servo_profile
     if servo_profile is None:
-        servo_profile = "pickup_align" if args.target == "pickup_zone" else "delivery_align"
+        servo_profile = default_servo_profile(args.target)
+    controller_profiles = {
+        cls_id: (
+            servo_profile
+            if name == args.target
+            else default_servo_profile(name)
+        )
+        for name, cls_id in TARGETS.items()
+    }
 
     display_enabled = bool(args.display)
     if display_enabled and not opencv_has_gui():
@@ -174,6 +192,7 @@ def main() -> None:
     print("=== Visual HUD runner ===")
     print(f"  target          : {args.target} (cls_id={target_cls_id})")
     print(f"  draw_targets    : {args.draw_targets}")
+    print(f"  debug_targets   : {args.debug_targets}")
     print(f"  weights         : {weights_path}")
     print(f"  device          : {device}")
     print(f"  conf_threshold  : {conf_threshold}")
@@ -212,7 +231,10 @@ def main() -> None:
         conf_threshold=conf_threshold,
         device=device,
     )
-    controller = make_controller(config, servo_profile)
+    controllers = {
+        cls_id: make_controller(config, profile)
+        for cls_id, profile in controller_profiles.items()
+    }
 
     start_time = time.monotonic()
     last_infer_time = 0.0
@@ -232,11 +254,15 @@ def main() -> None:
     latest_targets: dict[int, dict] = {}
     latest_targets_time = 0.0
     latest_debug: dict | None = None
+    latest_debugs: dict[int, dict] = {}
     latest_velocity = (0.0, 0.0, 0.0)
+    latest_velocities: dict[int, tuple[float, float, float]] = {}
     latest_detection_time = 0.0
+    latest_detection_times: dict[int, float] = {}
 
     infer_interval_s = 1.0 / args.infer_hz if args.infer_hz > 0 else 0.0
     output_interval_s = 1.0 / args.output_hz if args.output_hz > 0 else 0.0
+    infer_all_targets = args.draw_targets == "all" or args.debug_targets == "all"
 
     try:
         while True:
@@ -282,7 +308,7 @@ def main() -> None:
             if should_infer:
                 infer_dt = now - last_infer_time if last_infer_time > 0 else 0.0
                 last_infer_time = now
-                if args.draw_targets == "all":
+                if infer_all_targets:
                     latest_targets = estimator.process_frame_all(
                         frame,
                         target_cls_ids=list(TARGETS.values()),
@@ -303,19 +329,28 @@ def main() -> None:
                 else:
                     latest_targets_time = 0.0
 
-                if latest_pose is not None:
-                    latest_debug = controller.compute_debug(
-                        latest_pose,
+                for cls_id, controller in controllers.items():
+                    target_pose = latest_targets.get(cls_id)
+                    if target_pose is None:
+                        latest_debugs.pop(cls_id, None)
+                        latest_velocities[cls_id] = (0.0, 0.0, 0.0)
+                        latest_detection_times.pop(cls_id, None)
+                        controller.reset()
+                        continue
+
+                    target_debug = controller.compute_debug(
+                        target_pose,
                         center_u=center_u,
                         center_v=center_v,
                         dt=infer_dt,
                     )
-                    latest_velocity = latest_debug["velocities"]
-                    latest_detection_time = now
-                else:
-                    latest_debug = None
-                    latest_velocity = (0.0, 0.0, 0.0)
-                    controller.reset()
+                    latest_debugs[cls_id] = target_debug
+                    latest_velocities[cls_id] = target_debug["velocities"]
+                    latest_detection_times[cls_id] = now
+
+                latest_debug = latest_debugs.get(target_cls_id)
+                latest_velocity = latest_velocities.get(target_cls_id, (0.0, 0.0, 0.0))
+                latest_detection_time = latest_detection_times.get(target_cls_id, 0.0)
 
             pose_is_fresh = (
                 latest_pose is not None
@@ -326,7 +361,14 @@ def main() -> None:
                 and now - latest_targets_time <= args.detection_stale_s
             )
             if targets_are_fresh:
-                for cls_id, target_pose in sorted(latest_targets.items()):
+                draw_cls_ids = (
+                    sorted(latest_targets)
+                    if args.draw_targets == "all" else [target_cls_id]
+                )
+                for cls_id in draw_cls_ids:
+                    target_pose = latest_targets.get(cls_id)
+                    if target_pose is None:
+                        continue
                     label = TARGET_LABELS.get(cls_id, f"cls_{cls_id}")
                     is_control_target = cls_id == target_cls_id
                     display_label = f"{label} CTRL" if is_control_target else label
@@ -344,13 +386,34 @@ def main() -> None:
                         thickness=3 if is_control_target else 2,
                     )
 
-                if pose_is_fresh:
+                debug_cls_ids = (
+                    sorted(latest_targets)
+                    if args.debug_targets == "all" else [target_cls_id]
+                )
+                drew_error_vector = False
+                for cls_id in debug_cls_ids:
+                    target_pose = latest_targets.get(cls_id)
+                    target_detection_time = latest_detection_times.get(cls_id, 0.0)
+                    target_is_fresh = (
+                        target_pose is not None
+                        and now - target_detection_time <= args.detection_stale_s
+                    )
+                    if not target_is_fresh:
+                        continue
+                    label = TARGET_LABELS.get(cls_id, f"cls_{cls_id}")
+                    color = CLASS_COLORS.get(label, CLASS_COLORS["default"])
                     visualizer.draw_error_vector(
                         annotated,
                         center=center,
-                        target=(int(round(latest_pose["u"])), int(round(latest_pose["v"]))),
+                        target=(
+                            int(round(target_pose["u"])),
+                            int(round(target_pose["v"])),
+                        ),
+                        color=color,
                     )
-                else:
+                    drew_error_vector = True
+
+                if not drew_error_vector:
                     cv2.drawMarker(annotated, center, (0, 0, 255), cv2.MARKER_CROSS, 16, 1)
             else:
                 cv2.drawMarker(annotated, center, (0, 0, 255), cv2.MARKER_CROSS, 16, 1)
@@ -402,6 +465,35 @@ def main() -> None:
                         "d_yaw": d_yaw,
                     }
                 )
+            if args.debug_targets == "all":
+                target_debugs = []
+                for cls_id in sorted(latest_targets):
+                    target_pose = latest_targets.get(cls_id)
+                    target_debug = latest_debugs.get(cls_id)
+                    target_detection_time = latest_detection_times.get(cls_id, 0.0)
+                    if (
+                        target_pose is None
+                        or target_debug is None
+                        or now - target_detection_time > args.detection_stale_s
+                    ):
+                        continue
+                    vx_i, vy_i, vyaw_i = latest_velocities.get(cls_id, (0.0, 0.0, 0.0))
+                    err_x_i, err_y_i, err_yaw_i = target_debug["errors"]
+                    target_debugs.append(
+                        {
+                            "label": TARGET_LABELS.get(cls_id, f"cls_{cls_id}"),
+                            "active": cls_id == target_cls_id,
+                            "conf": target_pose["conf"],
+                            "vx": vx_i,
+                            "vy": vy_i,
+                            "vyaw": vyaw_i,
+                            "err_x": err_x_i,
+                            "err_y": err_y_i,
+                            "err_yaw": err_yaw_i,
+                        }
+                    )
+                if target_debugs:
+                    hud["target_debugs"] = target_debugs
 
             visualizer.draw_hud(annotated, hud)
             raw_visualizer.write_frame(frame)
