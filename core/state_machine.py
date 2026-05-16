@@ -176,11 +176,6 @@ class GlobalFSM:
         ):
             self._check_failsafe()
 
-        # 若 Failsafe 在上面触发了跃迁，此 tick 不再执行 handler
-        if self._state == FlightState.EMERGENCY and \
-           self._state != FlightState.EMERGENCY:
-            pass  # 不会到达这里，逻辑保留供阅读
-
         # ── 层 1：状态分派 ──
         handler = self._STATE_HANDLERS.get(self._state)
         if handler:
