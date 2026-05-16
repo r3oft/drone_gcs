@@ -36,9 +36,13 @@ class StubFlightBridge:
         self.takeoff_return = True
         self.land_return = True
         self.set_mode_return = True
+        self.connect_count = 0
         self.set_mode_calls: list[str] = []
 
     def connect(self) -> bool:
+        self.connect_count += 1
+        if self.connect_return:
+            self._connected = True
         return self.connect_return
 
     def arm_and_takeoff(self, target_alt: float) -> bool:
@@ -69,12 +73,20 @@ class StubMCUBridge:
         self._response_idx = 0
         self.command_log: list[str] = []
         self._connected = True
+        self.connect_count = 0
+        self.connect_return = True
         self.send_return = True
 
     def set_responses(self, *responses):
         """预设响应序列，每次 get_latest_response() 消费一个。"""
         self._responses = list(responses)
         self._response_idx = 0
+
+    def connect(self) -> bool:
+        self.connect_count += 1
+        if self.connect_return:
+            self._connected = True
+        return self.connect_return
 
     def send_command(self, command: str) -> bool:
         self.command_log.append(command)
@@ -230,6 +242,8 @@ class TestResetToInbound:
 
         # 第一个 tick: 执行连接 + MCU RESET
         fsm.tick(DUMMY_FRAME)
+        assert flight.connect_count == 1
+        assert mcu.connect_count == 1
         assert MCUCommand.RESET in mcu.command_log
 
         # 第二个 tick: 心跳 OK + RESET_DONE → INBOUND

@@ -468,6 +468,13 @@ class MCUBridge(IMCUBridge):
         self._listener_vehicle = current_vehicle
         return True
 
+    def connect(self) -> bool:
+        """Validate the legacy Pixhawk SERIAL_CONTROL MCU path."""
+        if not self._flight_bridge.is_connected():
+            logger.error("Cannot connect MCU through Pixhawk: flight link is closed")
+            return False
+        return self._register_serial_listener()
+
     def send_command(self, command: str) -> bool:
         """
         向 Pico 2 发送控制指令

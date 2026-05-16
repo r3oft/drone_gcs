@@ -1,7 +1,56 @@
+import sys
+import types
+
 import main as gcs_main
 
 from core.state_machine import FlightState
 from utils.config_manager import ConfigManager
+
+
+def install_fake_live_modules(monkeypatch):
+    class FakeFlightConfig:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class FakeFlightBridge:
+        def __init__(self, config):
+            self.config = config
+
+    class FakeLegacyMCUBridge:
+        def __init__(self, flight, config):
+            self.flight = flight
+            self.config = config
+
+    class FakeMCUConfig:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class FakeDirectSerialMCUBridge:
+        def __init__(self, config):
+            self.config = config
+
+    monkeypatch.setitem(
+        sys.modules,
+        "core.flight_bridge",
+        types.SimpleNamespace(
+            FlightConfig=FakeFlightConfig,
+            FlightBridge=FakeFlightBridge,
+            MCUBridge=FakeLegacyMCUBridge,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "core.mcu_bridge",
+        types.SimpleNamespace(
+            MCUConfig=FakeMCUConfig,
+            DirectSerialMCUBridge=FakeDirectSerialMCUBridge,
+        ),
+    )
+    return types.SimpleNamespace(
+        FlightBridge=FakeFlightBridge,
+        LegacyMCUBridge=FakeLegacyMCUBridge,
+        DirectSerialMCUBridge=FakeDirectSerialMCUBridge,
+    )
 
 
 def test_live_start_requires_explicit_confirmation():
@@ -63,3 +112,46 @@ def test_state_needs_frame_only_for_vision_states():
     assert gcs_main.state_needs_frame(FlightState.TASK_REL_DESCEND)
     assert not gcs_main.state_needs_frame(FlightState.TRANS_DELIVERY)
     assert not gcs_main.state_needs_frame(FlightState.IDLE)
+
+
+def test_live_build_uses_direct_serial_mcu_by_default(monkeypatch):
+    classes = install_fake_live_modules(monkeypatch)
+    args = gcs_main.parse_args(
+        [
+            "--mode",
+            "live",
+            "--mcu-port",
+            "loop://",
+            "--mcu-baud",
+            "57600",
+        ]
+    )
+    config = ConfigManager("config/default.yaml")
+
+    flight, mcu = gcs_main.build_flight_links(args, config)
+
+    assert isinstance(flight, classes.FlightBridge)
+    assert isinstance(mcu, classes.DirectSerialMCUBridge)
+    assert mcu.config.port == "loop://"
+    assert mcu.config.baudrate == 57600
+    assert mcu.config.read_timeout_s == 0.02
+    assert mcu.config.write_timeout_s == 0.5
+
+
+def test_live_build_can_use_legacy_pixhawk_mcu_transport(monkeypatch):
+    classes = install_fake_live_modules(monkeypatch)
+    args = gcs_main.parse_args(
+        [
+            "--mode",
+            "live",
+            "--mcu-transport",
+            "pixhawk_serial_control",
+        ]
+    )
+    config = ConfigManager("config/default.yaml")
+
+    flight, mcu = gcs_main.build_flight_links(args, config)
+
+    assert isinstance(flight, classes.FlightBridge)
+    assert isinstance(mcu, classes.LegacyMCUBridge)
+    assert mcu.flight is flight

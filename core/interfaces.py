@@ -170,14 +170,27 @@ class IFlightBridge(ABC):
 
 
 class IMCUBridge(ABC):
+    # Default live transport is a direct PC serial link to the MCU. The old
+    # Pixhawk SERIAL_CONTROL path can still implement this interface as legacy.
     """
     末端执行器（Pico 2）通信抽象接口。
 
     由飞控组在 core/mcu_bridge.py 中实现真实版本，
     由算法组在 utils/mock.py 中实现 Mock 版本。
 
-    通信路径：PC ←(MAVLink SERIAL_CONTROL)→ Pixhawk ←(UART4)→ Pico 2
+    默认通信路径：PC 串口直连 MCU。
+    兼容通信路径：PC ←(MAVLink SERIAL_CONTROL)→ Pixhawk ←(UART4)→ MCU。
     """
+
+    @abstractmethod
+    def connect(self) -> bool:
+        """
+        Open or validate the MCU communication link.
+
+        Returns:
+            True when commands/responses can use the link, otherwise False.
+        """
+        ...
 
     @abstractmethod
     def send_command(self, command: str) -> bool:

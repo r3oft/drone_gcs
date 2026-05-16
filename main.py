@@ -210,7 +210,7 @@ def build_flight_links(args: argparse.Namespace, config: ConfigManager) -> tuple
             )
         return flight, mcu
 
-    from core.flight_bridge import FlightBridge, FlightConfig, MCUBridge
+    from core.flight_bridge import FlightBridge, FlightConfig
 
     flight_config = FlightConfig(
         connection_string=args.conn or config.get("mavlink.connection"),
@@ -226,14 +226,44 @@ def build_flight_links(args: argparse.Namespace, config: ConfigManager) -> tuple
         land_timeout_s=cfg_int(config, "flight.land_timeout_s", 20),
         land_detect_alt=cfg_float(config, "flight.land_detect_alt", 0.15),
         pixhawk_baud=int(option_or_config(args.baud, config, "mavlink.baud", 57600)),
-        mcu_serial_port=cfg_int(config, "mcu.serial_port", 4),
+        mcu_serial_port=cfg_int(
+            config,
+            "mcu.pixhawk_serial_port",
+            cfg_int(config, "mcu.serial_port", 4),
+        ),
         mcu_baudrate=cfg_int(config, "mcu.baudrate", 115200),
         reconnect_enabled=cfg_bool(config, "mavlink.reconnect_enabled", True),
         reconnect_max_attempts=cfg_int(config, "mavlink.reconnect_max_attempts", 3),
         reconnect_backoff_s=cfg_float(config, "mavlink.reconnect_backoff_s", 1.0),
     )
     flight = FlightBridge(flight_config)
-    mcu = MCUBridge(flight, flight_config)
+
+    mcu_transport = option_or_config(
+        args.mcu_transport,
+        config,
+        "mcu.transport",
+        "direct_serial",
+    )
+    if mcu_transport == "direct_serial":
+        from core.mcu_bridge import DirectSerialMCUBridge, MCUConfig
+
+        mcu_config = MCUConfig(
+            port=str(
+                option_or_config(args.mcu_port, config, "mcu.port", "/dev/ttyACM0")
+            ),
+            baudrate=int(
+                option_or_config(args.mcu_baud, config, "mcu.baudrate", 115200)
+            ),
+            read_timeout_s=cfg_float(config, "mcu.read_timeout_s", 0.02),
+            write_timeout_s=cfg_float(config, "mcu.write_timeout_s", 0.5),
+        )
+        mcu = DirectSerialMCUBridge(mcu_config)
+    elif mcu_transport == "pixhawk_serial_control":
+        from core.flight_bridge import MCUBridge
+
+        mcu = MCUBridge(flight, flight_config)
+    else:
+        raise ValueError(f"Unsupported MCU transport: {mcu_transport}")
     return flight, mcu
 
 
@@ -335,6 +365,13 @@ def close_runtime(components: RuntimeComponents | None, logger: Any) -> None:
     if callable(release):
         release()
 
+    close_mcu = getattr(components.mcu, "close", None)
+    if callable(close_mcu):
+        try:
+            close_mcu()
+        except Exception as exc:
+            logger.warning("Failed to close MCU link cleanly: %s", exc)
+
     vehicle = getattr(components.flight, "_vehicle", None)
     if vehicle is not None:
         try:
@@ -388,6 +425,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--conn", default=None)
     parser.add_argument("--baud", type=int, default=None)
     parser.add_argument("--heartbeat-timeout", type=int, default=None)
+    parser.add_argument("--mcu-port", default=None)
+    parser.add_argument("--mcu-baud", type=int, default=None)
+    parser.add_argument(
+        "--mcu-transport",
+        choices=("direct_serial", "pixhawk_serial_control"),
+        default=None,
+    )
     return parser.parse_args(argv)
 
 

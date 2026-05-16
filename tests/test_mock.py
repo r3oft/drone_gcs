@@ -308,6 +308,11 @@ class TestMockMCUBridgeDefault:
         """初始状态已连接。"""
         assert mcu.is_connected()
 
+    def test_connect_sets_connected(self, mcu):
+        mcu.set_connected(False)
+        assert mcu.connect() is True
+        assert mcu.is_connected()
+
 
 class TestMockMCUBridgeAutoResponse:
     """自动响应测试。"""

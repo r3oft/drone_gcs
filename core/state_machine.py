@@ -353,8 +353,18 @@ class GlobalFSM:
         """RESET：飞控连接 + MCU 复位 + 等待两者就绪。"""
         # 首次进入：执行连接和复位
         if not self._mcu_cmd_sent:
-            self._flight.connect()
-            self._mcu.send_command(MCUCommand.RESET)
+            if not self._flight.connect():
+                self._logger.error("Flight connect failed, entering EMERGENCY")
+                self._transition_to(FlightState.EMERGENCY)
+                return
+            if not self._mcu.connect():
+                self._logger.error("MCU connect failed, entering EMERGENCY")
+                self._transition_to(FlightState.EMERGENCY)
+                return
+            if not self._mcu.send_command(MCUCommand.RESET):
+                self._logger.error("MCU RESET send failed, entering EMERGENCY")
+                self._transition_to(FlightState.EMERGENCY)
+                return
             self._mcu_cmd_sent = True
             self._mcu_cmd_time = now
             return

@@ -291,10 +291,17 @@ class MockMCUBridge(IMCUBridge):
             MCUCommand.START_RELEASE, MCUResponse.RELEASE_DONE, delay_s=1.5
         )
 
+    def connect(self) -> bool:
+        self._connected = True
+        return True
+
     def send_command(self, command: str) -> bool:
         """
         优先级：故障注入 > 自动响应 > 无规则（仅记录）
         """
+        if not self._connected:
+            return False
+
         self._command_log.append({
             "time": time.time(),
             "command": command,

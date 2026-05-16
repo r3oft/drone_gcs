@@ -88,6 +88,11 @@ flight:
 
 # ======== MCU 通信（MCUBridge 使用） ========
 mcu:
+  transport: "direct_serial"      # direct_serial / pixhawk_serial_control
+  port: "/dev/ttyACM0"            # PC direct serial port for MCU
+  read_timeout_s: 0.02            # non-blocking serial read timeout
+  write_timeout_s: 0.5            # serial write timeout
+  pixhawk_serial_port: 4          # legacy Pixhawk SERIAL_CONTROL UART
   serial_port: 4                 # Pico 2 所在 Pixhawk UART 号，发送时映射到 MAVLink SERIAL_CONTROL enum
   baudrate: 115200               # Pico 2 串口波特率
   grab_timeout_s: 10            # 等待 GRAB_DONE 响应超时 (s)
