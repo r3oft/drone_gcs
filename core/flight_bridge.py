@@ -205,10 +205,8 @@ class FlightBridge(IFlightBridge):
                 logger.error(f"takeoff timed out after {self.config.takeoff_timeout_s}s")
                 return False
 
-            current_alt = self._get_altitude()
-            if current_alt is None:
-                logger.error("takeoff cannot read local altitude")
-                return False
+        #     current_alt = float(vehicle.location.global_relative_frame.alt or 0.0)
+        #     logger.debug(f"当前高度：{current_alt:.2f}m / 目标高度：{target_alt}m")
 
             logger.debug(f"Current altitude: {current_alt:.2f}m / target: {target_alt:.2f}m")
             if current_alt >= target_alt * 0.95:
