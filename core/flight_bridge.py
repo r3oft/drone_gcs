@@ -28,6 +28,9 @@ class FlightConfig:
     pixhawk_baud: int = 57600  # Pixhawk 串口波特率
     mcu_serial_port: int = 4  # Pico 2 连接的 Pixhawk UART 端口
     mcu_baudrate: int = 115200  # Pico 2 波特率
+    goto_vertical_speed: float = 0.15
+    goto_alt_tolerance: float = 0.05
+    goto_command_hz: float = 5.0
     reconnect_enabled: bool = False
     reconnect_max_attempts: int = 3
     reconnect_backoff_s: float = 1.0
@@ -335,7 +338,7 @@ class FlightBridge(IFlightBridge):
         """
         切换飞行模式
         """
-        valid_modes = ["GUIDED", "LOITER", "RTL", "GUIDED_NOGPS"]
+        valid_modes = ["GUIDED", "LOITER", "RTL", "LAND", "GUIDED_NOGPS"]
         if mode not in valid_modes:
             logger.error(f"无效模式：{mode}，仅支持 {valid_modes}")
             return False
@@ -459,6 +462,13 @@ class MCUBridge(IMCUBridge):
     def _is_mcu_serial_port(self, port: int) -> bool:
         return port in {self.config.mcu_serial_port, self._serial_control_port()}
 
+    def connect(self) -> bool:
+        """Validate the legacy Pixhawk SERIAL_CONTROL MCU path."""
+        if not self._flight_bridge.is_connected():
+            logger.error("Cannot connect MCU through Pixhawk: flight link is closed")
+            return False
+        return self._register_serial_listener()
+
     def _register_serial_listener(self):
         """注册串口数据监听回调，必要时重新绑定到最新飞控连接。"""
         current_vehicle = self._flight_bridge._vehicle
@@ -509,6 +519,8 @@ class MCUBridge(IMCUBridge):
         try:
             # 构造 SERIAL_CONTROL 消息
             cmd_bytes = command.encode('ascii')
+            data_array = bytearray(70)
+            data_array[:len(cmd_bytes)] = cmd_bytes
             msg = self._vehicle.message_factory.serial_control_encode(
                 self._serial_control_port(),  # 目标串口
                 0,  # 预留
