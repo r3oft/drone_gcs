@@ -17,11 +17,12 @@ class FakeMessageFactory:
 
 
 class FakeVehicle:
-    def __init__(self, alt=0.5, armed=True, mode="GUIDED"):
+    def __init__(self, alt=0.5, armed=True, mode="GUIDED", global_alt=None):
         self.mode = SimpleNamespace(name=mode)
         self.armed = armed
         self.location = SimpleNamespace(
-            global_relative_frame=SimpleNamespace(alt=alt)
+            global_relative_frame=SimpleNamespace(alt=global_alt),
+            local_frame=SimpleNamespace(down=-alt),
         )
         self.heading = 0.0
         self.battery = SimpleNamespace(level=100)
@@ -37,10 +38,12 @@ class FakeVehicle:
     def send_mavlink(self, msg):
         self.sent_messages.append(msg)
         # Simulate the aircraft responding to NED vertical velocity.
-        self.location.global_relative_frame.alt = max(
-            0.0,
-            self.location.global_relative_frame.alt - msg["vz"] * 0.1,
-        )
+        self.location.local_frame.down += msg["vz"] * 0.1
+        if self.location.global_relative_frame.alt is not None:
+            self.location.global_relative_frame.alt = max(
+                0.0,
+                self.location.global_relative_frame.alt - msg["vz"] * 0.1,
+            )
 
     def flush(self):
         self.flushed = True
@@ -83,6 +86,26 @@ def test_simple_goto_climbs_with_negative_ned_velocity():
 
     assert any(msg["vz"] < 0 for msg in vehicle.sent_messages)
     assert vehicle.sent_messages[-1]["vz"] == 0
+
+
+def test_simple_goto_uses_local_position_when_global_altitude_missing():
+    vehicle = FakeVehicle(alt=0.2, global_alt=None)
+    bridge = make_bridge(vehicle)
+
+    assert bridge.simple_goto(0.4) is True
+
+    assert vehicle.location.global_relative_frame.alt is None
+    assert any(msg["vz"] < 0 for msg in vehicle.sent_messages)
+    assert abs((-vehicle.location.local_frame.down) - 0.4) <= bridge.config.goto_alt_tolerance
+
+
+def test_get_telemetry_uses_local_position_altitude():
+    vehicle = FakeVehicle(alt=0.35, global_alt=None)
+    bridge = make_bridge(vehicle)
+
+    telemetry = bridge.get_telemetry()
+
+    assert telemetry["alt"] == 0.35
 
 
 def test_land_waits_for_touchdown_after_mode_switch():

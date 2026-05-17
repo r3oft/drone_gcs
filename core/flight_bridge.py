@@ -31,6 +31,7 @@ class FlightConfig:
     goto_vertical_speed: float = 0.15
     goto_alt_tolerance: float = 0.05
     goto_command_hz: float = 5.0
+    local_position_timeout_s: float = 2.0
     reconnect_enabled: bool = False
     reconnect_max_attempts: int = 3
     reconnect_backoff_s: float = 1.0
@@ -43,6 +44,8 @@ class FlightBridge(IFlightBridge):
         self.config = config or FlightConfig()
         self._vehicle: Optional[Vehicle] = None
         self._last_heartbeat_time: float = 0.0
+        self._latest_local_position_ned: Optional[Dict[str, float]] = None
+        self._latest_local_position_time: float = 0.0
 
     def connect(self) -> bool:
         """
@@ -59,9 +62,9 @@ class FlightBridge(IFlightBridge):
                 self.config.connection_string,
                 wait_ready=False,  # 改成 False
                 heartbeat_timeout=self.config.heartbeat_timeout,
-                baud=self.config.pixhawk_baud   
+                baud=self.config.pixhawk_baud
             )
-            
+
             logger.info("心跳已就绪，开始拉取参数...")
 
             try:
@@ -70,11 +73,15 @@ class FlightBridge(IFlightBridge):
                 logger.info("参数拉取成功")
             except Exception as param_err:
                 logger.warning(f"参数拉取失败，但继续使用：{param_err}")
-            
+
             # 注册心跳监听
             @self._vehicle.on_message('HEARTBEAT')
-            def _on_heartbeat(self, name, msg):
+            def _on_heartbeat(vehicle, name, msg):
                 self._last_heartbeat_time = time.time()
+
+            @self._vehicle.on_message('LOCAL_POSITION_NED')
+            def _on_local_position_ned(vehicle, name, msg):
+                self._record_local_position_ned(msg)
 
             logger.info(f"飞控连接成功: {self.config.connection_string}")
             self._last_heartbeat_time = time.time()
@@ -88,9 +95,65 @@ class FlightBridge(IFlightBridge):
             logger.error(f"飞控连接失败：串口错误 - {e}")
         except Exception as e:
             logger.error(f"飞控连接失败：未知错误 - {e}", exc_info=True)
-        
+
         self._vehicle = None
         return False
+
+    def _record_local_position_ned(self, msg) -> None:
+        """Cache LOCAL_POSITION_NED so altitude control can avoid global coordinates."""
+        try:
+            self._latest_local_position_ned = {
+                "x": float(msg.x),
+                "y": float(msg.y),
+                "z": float(msg.z),
+                "vx": float(getattr(msg, "vx", 0.0)),
+                "vy": float(getattr(msg, "vy", 0.0)),
+                "vz": float(getattr(msg, "vz", 0.0)),
+                "time_boot_ms": float(getattr(msg, "time_boot_ms", 0.0)),
+            }
+            self._latest_local_position_time = time.time()
+        except (AttributeError, TypeError, ValueError) as exc:
+            logger.debug(f"Ignoring invalid LOCAL_POSITION_NED message: {exc}")
+
+    def _get_local_altitude(self) -> Optional[float]:
+        """
+        Return altitude above the EKF origin using LOCAL_POSITION_NED.
+
+        MAVLink LOCAL_POSITION_NED uses NED coordinates, so z/down is positive
+        downward. Height above the origin is therefore -z.
+        """
+        if self._latest_local_position_ned is not None:
+            age = time.time() - self._latest_local_position_time
+            if age <= self.config.local_position_timeout_s:
+                return -float(self._latest_local_position_ned["z"])
+            logger.debug(f"LOCAL_POSITION_NED data is stale: {age:.2f}s old")
+            return None
+
+        if self._vehicle is None:
+            return None
+
+        location = getattr(self._vehicle, "location", None)
+        local_frame = getattr(location, "local_frame", None)
+        down = getattr(local_frame, "down", None)
+        if down is None:
+            return None
+        return -float(down)
+
+    def _get_altitude(self) -> Optional[float]:
+        """Read altitude with LOCAL_POSITION_NED first, global-relative only as fallback."""
+        local_alt = self._get_local_altitude()
+        if local_alt is not None:
+            return local_alt
+
+        if self._vehicle is None:
+            return None
+
+        location = getattr(self._vehicle, "location", None)
+        global_relative_frame = getattr(location, "global_relative_frame", None)
+        global_alt = getattr(global_relative_frame, "alt", None)
+        if global_alt is None:
+            return None
+        return float(global_alt)
 
     def arm_and_takeoff(self, target_alt: float) -> bool:
         """
@@ -143,7 +206,10 @@ class FlightBridge(IFlightBridge):
                 logger.error(f"起飞超时：{self.config.takeoff_timeout_s}s 未到达目标高度")
                 return False
 
-            current_alt = float(vehicle.location.global_relative_frame.alt or 0.0)
+            current_alt = self._get_altitude()
+            if current_alt is None:
+                logger.error("takeoff cannot read local altitude")
+                return False
             logger.debug(f"当前高度：{current_alt:.2f}m / 目标高度：{target_alt}m")
 
             if current_alt >= target_alt * 0.95:
@@ -276,7 +342,7 @@ class FlightBridge(IFlightBridge):
                 logger.info("Vehicle disarmed; landing confirmed")
                 return True
 
-            current_alt = vehicle.location.global_relative_frame.alt
+            current_alt = self._get_altitude()
             if current_alt is not None and current_alt < self.config.land_detect_alt:
                 logger.info(f"Altitude below land threshold: {current_alt:.2f}m")
                 return True
@@ -318,9 +384,9 @@ class FlightBridge(IFlightBridge):
                 self.send_body_velocity(0, 0, 0, 0)
                 return False
 
-            current_alt = vehicle.location.global_relative_frame.alt
+            current_alt = self._get_altitude()
             if current_alt is None:
-                logger.error("simple_goto cannot read current relative altitude")
+                logger.error("simple_goto cannot read LOCAL_POSITION_NED altitude")
                 self.send_body_velocity(0, 0, 0, 0)
                 return False
 
@@ -384,7 +450,7 @@ class FlightBridge(IFlightBridge):
         telemetry = {
             "armed": vehicle.armed,
             "mode": vehicle.mode.name,
-            "alt": vehicle.location.global_relative_frame.alt,
+            "alt": self._get_altitude() or 0.0,
             "heading": vehicle.heading,  # 航向角（度，0-360）
             "battery_pct": vehicle.battery.level / 100.0 if vehicle.battery.level else 0.0,
             "heartbeat_ok": self.is_connected()
@@ -483,17 +549,17 @@ class MCUBridge(IMCUBridge):
             return True
 
         self._vehicle = current_vehicle
-        
+
         # 注册 SERIAL_CONTROL 监听
         self._vehicle.add_message_listener('SERIAL_CONTROL', self._serial_listener)
         logger.info(f"[MCUBridge] 已注册 SERIAL_CONTROL 监听")
-        
+
         # 同时注册调试用的 ALL 监听器（捕获 SERIAL_CONTROL 消息）
         def _debug_all_messages(vehicle, name, msg):
             if name == 'SERIAL_CONTROL':
                 logger.debug(f"[MCUBridge-DEBUG] 捕获到 SERIAL_CONTROL 消息")
-        
-        
+
+
         self._listener_vehicle = current_vehicle
         return True
 
