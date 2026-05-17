@@ -22,24 +22,12 @@ class FlightConfig:
     """飞行控制配置项"""
     connection_string: str = "tcp:127.0.0.1:5760"  # 飞控连接串
     heartbeat_timeout: int = 60  # 连接心跳超时(s)
-<<<<<<< HEAD
-    takeoff_timeout_s: int = 30  # 起飞超时(s)
-    land_timeout_s: int = 60  # 降落超时(s)
-    land_detect_alt: float = 0.1  # 触地检测高度(m)
-    pixhawk_baud: int = 57600  # Pixhawk 串口波特率
-    mcu_serial_port: int = 4  # Pico 2 连接的 Pixhawk UART 端口
-    mcu_baudrate: int = 115200  # Pico 2 波特率
-    reconnect_enabled: bool = False
-    reconnect_max_attempts: int = 3
-    reconnect_backoff_s: float = 1.0
-=======
     takeoff_timeout_s: int = 30  # 起飞超时(s)
     land_timeout_s: int = 60  # 降落超时(s)
     land_detect_alt: float = 0.1  # 触地检测高度(m)
     pixhawk_baud: int = 57600  # Pixhawk 串口波特率
     mcu_serial_port: int = 3  # Pico 2 连接的 Pixhawk UART 端口（SERIAL3）
     mcu_baudrate: int = 57600  # Pico 2 波特率
->>>>>>> 941ea95 (完整的起飞降落代码，simple_goto代码待debug)
 
 
 class FlightBridge(IFlightBridge):
@@ -139,26 +127,6 @@ class FlightBridge(IFlightBridge):
                 return False
             time.sleep(0.5)
 
-<<<<<<< HEAD
-        # 4. 执行起飞
-        logger.info(f"起飞到目标高度：{target_alt}m")
-        vehicle.simple_takeoff(target_alt)
-
-        # 5. 等待到达目标高度
-        while True:
-            if time.time() - start_time > self.config.takeoff_timeout_s:
-                logger.error(f"起飞超时：{self.config.takeoff_timeout_s}s 未到达目标高度")
-                return False
-
-            current_alt = float(vehicle.location.global_relative_frame.alt or 0.0)
-            logger.debug(f"当前高度：{current_alt:.2f}m / 目标高度：{target_alt}m")
-
-            if current_alt >= target_alt * 0.95:
-                logger.info(f"到达目标高度：{current_alt:.2f}m")
-                return True
-
-            time.sleep(0.5)
-=======
         # 4. 执行起飞
         logger.info(f"起飞到目标高度：{target_alt}m")
         vehicle.simple_takeoff(target_alt)
@@ -180,7 +148,6 @@ class FlightBridge(IFlightBridge):
         #         return True
 
         #     time.sleep(0.5)
->>>>>>> 941ea95 (完整的起飞降落代码，simple_goto代码待debug)
 
     def send_body_velocity(
         self, vx: float, vy: float, vz: float, yaw_rate: float
@@ -196,8 +163,12 @@ class FlightBridge(IFlightBridge):
         bit 10:  偏航角 yaw
         bit 11:  偏航角速度 yaw_rate
 
-        0x07C7 = 忽略位置(0-2)、加速度(6-8)、force(9)、偏航角(10)
+        0x0FC7 = 0000 1111 1100 0111
+        = 忽略位置(0-2)、加速度(6-8)、force(9)、偏航角(10)
         = 仅使用速度(3-5) + 偏航角速度(11)
+
+        注意：ArduCopter 3.6.x 对 MAV_FRAME_BODY_NED 支持有限，
+        如果不工作，建议升级到 4.x 或使用 MAV_FRAME_BODY_OFFSET_NED
         """
         if not self.is_connected():
             logger.error("无法发送速度指令：飞控未连接")
@@ -214,8 +185,8 @@ class FlightBridge(IFlightBridge):
         msg = vehicle.message_factory.set_position_target_local_ned_encode(
             0,  # time_boot_ms (not used)
             0, 0,  # target system, target component
-            mavutil.mavlink.MAV_FRAME_BODY_NED,
-            0x07C7,  # type_mask: use velocity and yaw_rate
+            mavutil.mavlink.MAV_FRAME_BODY_OFFSET_NED,  # 使用 BODY_OFFSET_NED（兼容性更好）
+            0x0FC7,  # type_mask: 仅使用速度 + 偏航角速度
             0, 0, 0,  # x, y, z positions (ignored)
             vx, vy, vz,  # x, y, z velocity in m/s
             0, 0, 0,  # x, y, z acceleration (ignored)
@@ -253,11 +224,7 @@ class FlightBridge(IFlightBridge):
 
         try:
             # 忽略姿态，仅使用角速度
-            type_mask = getattr(
-                mavutil.mavlink,
-                "ATTITUDE_TARGET_TYPEMASK_ATTITUDE_IGNORE",
-                128,
-            )
+            type_mask = 0b00000111  # = 7
 
             msg = vehicle.message_factory.set_attitude_target_encode(
                 0,      # time_boot_ms
@@ -353,7 +320,7 @@ class FlightBridge(IFlightBridge):
         """
         切换飞行模式
         """
-        valid_modes = ["GUIDED", "LOITER", "RTL", "LAND", "GUIDED_NOGPS"]
+        valid_modes = ["GUIDED", "LOITER", "RTL", "GUIDED_NOGPS"]
         if mode not in valid_modes:
             logger.error(f"无效模式：{mode}，仅支持 {valid_modes}")
             return False
@@ -417,45 +384,10 @@ class FlightBridge(IFlightBridge):
         heartbeat_expired = (time.time() - self._last_heartbeat_time) > (self.config.heartbeat_timeout * 2)
         if heartbeat_expired:
             logger.warning("飞控心跳超时，连接已断开")
-            try:
-                self._vehicle.close()
-            except Exception:
-                pass
             self._vehicle = None
-            if self.config.reconnect_enabled:
-                return self._attempt_reconnect()
             return False
 
         return True
-
-    def _attempt_reconnect(self) -> bool:
-        """Best-effort reconnect used after heartbeat timeout."""
-        for attempt in range(1, self.config.reconnect_max_attempts + 1):
-            logger.info(
-                f"尝试重连飞控 ({attempt}/{self.config.reconnect_max_attempts})"
-            )
-            if self.connect():
-                return True
-            time.sleep(self.config.reconnect_backoff_s)
-        return False
-
-    def get_connection_health(self) -> Dict[str, object]:
-        """Return a non-throwing snapshot of the MAVLink link health."""
-        heartbeat_age = (
-            time.time() - self._last_heartbeat_time
-            if self._last_heartbeat_time > 0
-            else None
-        )
-        heartbeat_limit = self.config.heartbeat_timeout * 2
-        connected = self._vehicle is not None and (
-            heartbeat_age is None or heartbeat_age <= heartbeat_limit
-        )
-        return {
-            "connected": connected,
-            "heartbeat_age_s": heartbeat_age,
-            "heartbeat_limit_s": heartbeat_limit,
-            "connection_string": self.config.connection_string,
-        }
 
 
 class MCUBridge(IMCUBridge):
@@ -484,35 +416,6 @@ class MCUBridge(IMCUBridge):
         # 注册 SERIAL_CONTROL 消息监听
         self._register_serial_listener()
 
-<<<<<<< HEAD
-    def _build_serial_listener(self):
-        """构建串口数据监听回调。"""
-        def _on_serial_control(vehicle, name, msg):
-            """处理从 Pixhawk 串口收到的 Pico 2 响应"""
-            if not self._is_mcu_serial_port(msg.port):
-                return
-
-            # 解析串口数据
-            data = bytes(msg.data[:msg.count])
-            for resp_bytes, resp_str in self._response_map.items():
-                if resp_bytes in data:
-                    self._response_buffer = resp_str
-                    logger.debug(f"收到 Pico 2 响应：{resp_str}")
-                    break
-
-        return _on_serial_control
-
-    def _serial_control_port(self) -> int:
-        """Map a logical UART number to the MAVLink SERIAL_CONTROL enum."""
-        port = self.config.mcu_serial_port
-        if port >= 100:
-            return port
-        constant_name = f"SERIAL_CONTROL_SERIAL{port}"
-        return getattr(mavutil.mavlink, constant_name, port)
-
-    def _is_mcu_serial_port(self, port: int) -> bool:
-        return port in {self.config.mcu_serial_port, self._serial_control_port()}
-=======
     def _build_serial_listener(self):
         """构建串口数据监听回调。"""
         def _on_serial_control(vehicle, name, msg):
@@ -551,7 +454,6 @@ class MCUBridge(IMCUBridge):
                 logger.debug(f"[MCUBridge] 数据不匹配预期响应")
 
         return _on_serial_control
->>>>>>> 941ea95 (完整的起飞降落代码，simple_goto代码待debug)
 
     def _register_serial_listener(self):
         """注册串口数据监听回调，必要时重新绑定到最新飞控连接。"""
@@ -581,13 +483,6 @@ class MCUBridge(IMCUBridge):
         self._listener_vehicle = current_vehicle
         return True
 
-    def connect(self) -> bool:
-        """Validate the legacy Pixhawk SERIAL_CONTROL MCU path."""
-        if not self._flight_bridge.is_connected():
-            logger.error("Cannot connect MCU through Pixhawk: flight link is closed")
-            return False
-        return self._register_serial_listener()
-
     def send_command(self, command: str) -> bool:
         """
         向 Pico 2 发送控制指令
@@ -608,12 +503,6 @@ class MCUBridge(IMCUBridge):
             return False
 
         try:
-<<<<<<< HEAD
-            # 构造 SERIAL_CONTROL 消息
-            cmd_bytes = command.encode('ascii')
-            msg = self._vehicle.message_factory.serial_control_encode(
-                self._serial_control_port(),  # 目标串口
-=======
             # 构造 SERIAL_CONTROL 消息
             cmd_bytes = command.encode('ascii')
             # 数据必须是 70 字节的数组，不足的用 0 填充
@@ -622,7 +511,6 @@ class MCUBridge(IMCUBridge):
             
             msg = self._vehicle.message_factory.serial_control_encode(
                 self.config.mcu_serial_port,  # 目标串口
->>>>>>> 941ea95 (完整的起飞降落代码，simple_goto代码待debug)
                 0,  # 预留
                 0,  # 操作：写入
                 self.config.mcu_baudrate,  # 波特率
