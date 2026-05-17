@@ -70,8 +70,8 @@ if fb.connect():
             input()
         
         # 第三步：起飞
-        print("[3/3] 起飞测试...")
-        target_altitude = 0.5
+        print("[3/4] 起飞测试...")
+        target_altitude = 0.3
         land_altitude = 0.3
         print(f"目标高度: {target_altitude}m\n")
         
@@ -79,18 +79,26 @@ if fb.connect():
         print("发送起飞指令...")
         fb.arm_and_takeoff(target_altitude)
 
-        # # 悬停 10 秒后降落
         print("悬停 10 秒...")
         time.sleep(10)
 
-        print("发送降落指令")
-        if not fb.simple_goto(land_altitude):
-            print("Altitude adjustment failed")
-        # # 悬停 5 秒后降落
-        # print("悬停 10 秒...")
-        # time.sleep(10)
-        # print("发送降落指令...")
-        # fb.land()
+        # 第四步：测试 send_body_velocity
+        print("[4/4] 测试 send_body_velocity...")
+        start = time.time()
+        while time.time() - start < 2.0:
+            fb.send_body_velocity(0.2, 0.0, 0.0, 0.0)
+            time.sleep(0.2)  # 5Hz
+
+        fb.send_body_velocity(0.0, 0.0, 0.0, 0.0)
+        print("\n停止速度指令")
+
+        time.sleep(2)
+
+        # print("发送降落指令")
+        # if not fb.simple_goto(land_altitude):
+        #     print("Altitude adjustment failed")
+        print("发送降落指令...")
+        fb.land()
         
         # print("监测高度和油门输出（按 Ctrl+C 停止）...\n")
         
