@@ -274,6 +274,28 @@ class TestInboundToAlign:
         fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.TASK_REC_ALIGN
 
+    def test_inbound_accepts_none_takeoff_result_and_waits_for_altitude(self, fsm, flight):
+        advance_to_state(fsm, flight, None, FlightState.INBOUND)
+        flight.takeoff_return = None
+        flight._telemetry["alt"] = 0.2
+
+        fsm.tick(DUMMY_FRAME)
+        assert fsm.state == FlightState.INBOUND
+
+        flight._telemetry["alt"] = 1.5
+        fsm.tick(DUMMY_FRAME)
+        assert fsm.state == FlightState.TASK_REC_ALIGN
+
+    def test_inbound_takeoff_timeout_after_command_accepted(self, fsm, flight):
+        advance_to_state(fsm, flight, None, FlightState.INBOUND)
+        flight.takeoff_return = None
+        flight._telemetry["alt"] = 0.2
+
+        fsm.tick(DUMMY_FRAME)
+        fsm._mcu_cmd_time = time.time() - 20
+        fsm.tick(DUMMY_FRAME)
+        assert fsm.state == FlightState.EMERGENCY
+
     def test_inbound_takeoff_fail(self, fsm, flight):
         advance_to_state(fsm, flight, None, FlightState.INBOUND)
         flight.takeoff_return = False
@@ -450,6 +472,19 @@ class TestTransDelivery:
         fsm._transfer_start_time = time.time() - 11
         fsm.tick(None)
         assert fsm.state == FlightState.TASK_REL_ALIGN
+
+    def test_trans_delivery_accepts_none_takeoff_result_and_waits_for_altitude(self, fsm, flight, mcu):
+        advance_to_state(fsm, flight, mcu, FlightState.TRANS_DELIVERY)
+        flight.takeoff_return = None
+        flight._telemetry["alt"] = 0.2
+
+        fsm.tick(None)
+        assert fsm._transfer_takeoff_done is False
+        assert fsm.state == FlightState.TRANS_DELIVERY
+
+        flight._telemetry["alt"] = 1.5
+        fsm.tick(None)
+        assert fsm._transfer_takeoff_done is True
 
 
 class TestReleaseFlow:

@@ -98,6 +98,7 @@ class GlobalFSM:
         self._target_lost_climb: float = config.get("fsm.target_lost_climb_s", 3.0)
         self._climb_vz: float = config.get("fsm.climb_vz", -0.2)
         self._takeoff_alt: float = config.get("flight.takeoff_alt", 1.5)
+        self._takeoff_timeout: float = config.get("flight.takeoff_timeout_s", 15.0)
         self._land_detect_alt: float = config.get("flight.land_detect_alt", 0.15)
         self._grab_timeout: float = config.get("mcu.grab_timeout_s", 10.0)
         self._release_timeout: float = config.get("mcu.release_timeout_s", 10.0)
@@ -338,6 +339,23 @@ class GlobalFSM:
                 )
                 self._transition_to(FlightState.EMERGENCY)
 
+    def _takeoff_altitude_reached(self, target_alt: float) -> bool:
+        tel = self._flight.get_telemetry()
+        return tel["alt"] >= target_alt * 0.95
+
+    def _check_takeoff_timeout(
+        self, now: float, target_alt: float, next_state: FlightState
+    ) -> None:
+        if self._takeoff_altitude_reached(target_alt):
+            self._transition_to(next_state)
+            return
+
+        if now - self._mcu_cmd_time > self._takeoff_timeout:
+            self._logger.error(
+                f"起飞超时：{self._takeoff_timeout:.1f}s 未到达目标高度 {target_alt:.2f}m"
+            )
+            self._transition_to(FlightState.EMERGENCY)
+
     def _handle_idle(self, frame, dt: float, now: float) -> None:
         """IDLE：等待启动指令。"""
         if self._start_requested:
@@ -383,15 +401,21 @@ class GlobalFSM:
 
     def _handle_inbound(self, frame, dt: float, now: float) -> None:
         """INBOUND：解锁起飞到任务高度。"""
-        # arm_and_takeoff 是阻塞调用，首次进入即执行
         if not self._mcu_cmd_sent:
             self._mcu_cmd_sent = True  # 复用标志防止重复调用
+            self._mcu_cmd_time = now
             success = self._flight.arm_and_takeoff(self._takeoff_alt)
-            if success:
-                self._transition_to(FlightState.TASK_REC_ALIGN)
-            else:
-                self._logger.error("起飞失败，进入 EMERGENCY")
+            now = time.time()
+            if success is False:
+                self._logger.error("起飞命令失败，进入 EMERGENCY")
                 self._transition_to(FlightState.EMERGENCY)
+                return
+
+            if self._takeoff_altitude_reached(self._takeoff_alt):
+                self._transition_to(FlightState.TASK_REC_ALIGN)
+            return
+
+        self._check_takeoff_timeout(now, self._takeoff_alt, FlightState.TASK_REC_ALIGN)
 
     def _handle_task_rec_align(self, frame, dt: float, now: float) -> None:
         """TASK_REC_ALIGN：视觉伺服对准取货区（cls_id=0）。"""
@@ -452,12 +476,23 @@ class GlobalFSM:
         """TRANS_DELIVERY：二次起飞 + 定距转移飞往投递区。"""
         # 子阶段 A：二次起飞
         if not self._transfer_takeoff_done:
-            success = self._flight.arm_and_takeoff(self._transfer_alt)
-            if success:
+            if not self._mcu_cmd_sent:
+                self._mcu_cmd_sent = True
+                self._mcu_cmd_time = now
+                success = self._flight.arm_and_takeoff(self._transfer_alt)
+                now = time.time()
+                if success is False:
+                    self._logger.error("二次起飞命令失败，进入 EMERGENCY")
+                    self._transition_to(FlightState.EMERGENCY)
+                    return
+
+            if self._takeoff_altitude_reached(self._transfer_alt):
                 self._transfer_takeoff_done = True
                 self._transfer_start_time = now
-            else:
-                self._logger.error("二次起飞失败，进入 EMERGENCY")
+            elif now - self._mcu_cmd_time > self._takeoff_timeout:
+                self._logger.error(
+                    f"二次起飞超时：{self._takeoff_timeout:.1f}s 未到达目标高度 {self._transfer_alt:.2f}m"
+                )
                 self._transition_to(FlightState.EMERGENCY)
             return
 
@@ -526,12 +561,23 @@ class GlobalFSM:
         """TRANS_CARGO：飞往下一个取货区（Phase 2 简单实现）。"""
         # 子阶段 A：起飞
         if not self._transfer_takeoff_done:
-            success = self._flight.arm_and_takeoff(self._transfer_alt)
-            if success:
+            if not self._mcu_cmd_sent:
+                self._mcu_cmd_sent = True
+                self._mcu_cmd_time = now
+                success = self._flight.arm_and_takeoff(self._transfer_alt)
+                now = time.time()
+                if success is False:
+                    self._logger.error("TRANS_CARGO 起飞命令失败，进入 EMERGENCY")
+                    self._transition_to(FlightState.EMERGENCY)
+                    return
+
+            if self._takeoff_altitude_reached(self._transfer_alt):
                 self._transfer_takeoff_done = True
                 self._transfer_start_time = now
-            else:
-                self._logger.error("TRANS_CARGO 起飞失败，进入 EMERGENCY")
+            elif now - self._mcu_cmd_time > self._takeoff_timeout:
+                self._logger.error(
+                    f"TRANS_CARGO 起飞超时：{self._takeoff_timeout:.1f}s 未到达目标高度 {self._transfer_alt:.2f}m"
+                )
                 self._transition_to(FlightState.EMERGENCY)
             return
 

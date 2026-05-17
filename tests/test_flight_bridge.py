@@ -29,11 +29,18 @@ class FakeVehicle:
         self.message_factory = FakeMessageFactory()
         self.sent_messages = []
         self.simple_goto_called = False
+        self.simple_takeoff_called_with = None
         self.flushed = False
 
     def simple_goto(self, target):
         self.simple_goto_called = True
         raise AssertionError("DroneKit simple_goto should not be used")
+
+    def simple_takeoff(self, target_alt):
+        self.simple_takeoff_called_with = target_alt
+        self.location.local_frame.down = -target_alt
+        if self.location.global_relative_frame.alt is not None:
+            self.location.global_relative_frame.alt = target_alt
 
     def send_mavlink(self, msg):
         self.sent_messages.append(msg)
@@ -106,6 +113,28 @@ def test_get_telemetry_uses_local_position_altitude():
     telemetry = bridge.get_telemetry()
 
     assert telemetry["alt"] == 0.35
+
+
+def test_send_body_velocity_keeps_yaw_rate_enabled():
+    vehicle = FakeVehicle()
+    bridge = make_bridge(vehicle)
+
+    bridge.send_body_velocity(0.0, 0.0, 0.0, 0.5)
+
+    msg = vehicle.sent_messages[-1]
+    assert msg["type_mask"] == 0x07C7
+    assert msg["type_mask"] & 0x0800 == 0
+    assert msg["yaw_rate"] == 0.5
+
+
+def test_arm_and_takeoff_returns_true_with_local_altitude():
+    vehicle = FakeVehicle(alt=0.0, armed=True, mode="GUIDED", global_alt=None)
+    bridge = make_bridge(vehicle)
+
+    assert bridge.arm_and_takeoff(0.4) is True
+
+    assert vehicle.simple_takeoff_called_with == 0.4
+    assert bridge.get_telemetry()["alt"] == 0.4
 
 
 def test_land_waits_for_touchdown_after_mode_switch():

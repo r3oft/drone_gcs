@@ -200,28 +200,22 @@ class FlightBridge(IFlightBridge):
         logger.info(f"起飞到目标高度：{target_alt}m")
         vehicle.simple_takeoff(target_alt)
 
-        # 5. 等待到达目标高度
-        # while True:
-        #     if time.time() - start_time > self.config.takeoff_timeout_s:
-        #         logger.error(f"起飞超时：{self.config.takeoff_timeout_s}s 未到达目标高度")
-        #         return False
+        while True:
+            if time.time() - start_time > self.config.takeoff_timeout_s:
+                logger.error(f"takeoff timed out after {self.config.takeoff_timeout_s}s")
+                return False
 
-<<<<<<< HEAD
             current_alt = self._get_altitude()
             if current_alt is None:
                 logger.error("takeoff cannot read local altitude")
                 return False
-            logger.debug(f"当前高度：{current_alt:.2f}m / 目标高度：{target_alt}m")
-=======
-        #     current_alt = float(vehicle.location.global_relative_frame.alt or 0.0)
-        #     logger.debug(f"当前高度：{current_alt:.2f}m / 目标高度：{target_alt}m")
->>>>>>> 7ad0052 (complete flight-control)
 
-        #     if current_alt >= target_alt * 0.95:
-        #         logger.info(f"到达目标高度：{current_alt:.2f}m")
-        #         return True
+            logger.debug(f"Current altitude: {current_alt:.2f}m / target: {target_alt:.2f}m")
+            if current_alt >= target_alt * 0.95:
+                logger.info(f"Reached takeoff altitude: {current_alt:.2f}m")
+                return True
 
-        #     time.sleep(0.5)
+            time.sleep(0.5)
 
     def send_body_velocity(
         self, vx: float, vy: float, vz: float, yaw_rate: float
@@ -237,7 +231,7 @@ class FlightBridge(IFlightBridge):
         bit 10:  偏航角 yaw
         bit 11:  偏航角速度 yaw_rate
 
-        0x0FC7 = 0000 1111 1100 0111
+        0x07C7 = 0000 0111 1100 0111
         = 忽略位置(0-2)、加速度(6-8)、force(9)、偏航角(10)
         = 仅使用速度(3-5) + 偏航角速度(11)
 
@@ -260,7 +254,7 @@ class FlightBridge(IFlightBridge):
             0,  # time_boot_ms (not used)
             0, 0,  # target system, target component
             mavutil.mavlink.MAV_FRAME_BODY_OFFSET_NED,  # 使用 BODY_OFFSET_NED（兼容性更好）
-            0x0FC7,  # type_mask: 仅使用速度 + 偏航角速度
+            0x07C7,  # type_mask: 仅使用速度 + 偏航角速度
             0, 0, 0,  # x, y, z positions (ignored)
             vx, vy, vz,  # x, y, z velocity in m/s
             0, 0, 0,  # x, y, z acceleration (ignored)

@@ -3,7 +3,7 @@ import time
 import logging
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -82,11 +82,11 @@ if fb.connect():
         print("悬停 10 秒...")
         time.sleep(10)
 
-        # 第四步：测试 send_body_velocity
+        # 第四步：测试 旋转角
         print("[4/4] 测试 send_body_velocity...")
         start = time.time()
-        while time.time() - start < 2.0:
-            fb.send_body_velocity(0.2, 0.0, 0.0, 0.0)
+        while time.time() - start < 4.0:
+            fb.send_body_velocity(0.0, 0.0, 0.0, 0.5)
             time.sleep(0.2)  # 5Hz
 
         fb.send_body_velocity(0.0, 0.0, 0.0, 0.0)
