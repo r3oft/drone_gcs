@@ -81,6 +81,12 @@ def make_controller(config: ConfigManager, profile: str) -> VisualServoControlle
             cfg_float(config, f"{base}.max_vel.y", 0.3),
             cfg_float(config, f"{base}.max_vel.yaw", 0.5),
         ],
+        axis_map=str(config.get(f"{base}.axis_map", "standard")),
+        axis_sign=[
+            cfg_float(config, f"{base}.axis_sign.x", 1.0),
+            cfg_float(config, f"{base}.axis_sign.y", 1.0),
+            cfg_float(config, f"{base}.axis_sign.yaw", 1.0),
+        ],
     )
 
 
@@ -105,6 +111,15 @@ def parse_args() -> argparse.Namespace:
         help="Compute and draw velocity/error debug for selected target or all detected targets.",
     )
     parser.add_argument("--servo-profile", choices=("pickup_align", "delivery_align"), default=None)
+    parser.add_argument(
+        "--servo-axis-map",
+        choices=("standard", "swap_xy"),
+        default=None,
+        help="Override image-to-body axis mapping for both servo profiles.",
+    )
+    parser.add_argument("--servo-sign-x", type=float, choices=(-1.0, 1.0), default=None)
+    parser.add_argument("--servo-sign-y", type=float, choices=(-1.0, 1.0), default=None)
+    parser.add_argument("--servo-sign-yaw", type=float, choices=(-1.0, 1.0), default=None)
     parser.add_argument("--infer-hz", type=float, default=15.0)
     parser.add_argument("--output-hz", type=float, default=15.0)
     parser.add_argument("--duration", type=float, default=0.0, help="0 means run until interrupted")
@@ -154,6 +169,20 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = ConfigManager(args.config)
+    servo_overrides = {}
+    if args.servo_axis_map is not None:
+        servo_overrides["servo.pickup_align.axis_map"] = args.servo_axis_map
+        servo_overrides["servo.delivery_align.axis_map"] = args.servo_axis_map
+    for axis, value in (
+        ("x", args.servo_sign_x),
+        ("y", args.servo_sign_y),
+        ("yaw", args.servo_sign_yaw),
+    ):
+        if value is not None:
+            servo_overrides[f"servo.pickup_align.axis_sign.{axis}"] = value
+            servo_overrides[f"servo.delivery_align.axis_sign.{axis}"] = value
+    if servo_overrides:
+        config.override_from_args(servo_overrides)
 
     from core.perception import TargetPoseEstimator
 

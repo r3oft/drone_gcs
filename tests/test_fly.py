@@ -71,8 +71,8 @@ if fb.connect():
         
         # 第三步：起飞
         print("[3/4] 起飞测试...")
-        target_altitude = 0.3
-        land_altitude = 0.3
+        target_altitude = 0.5
+        land_altitude = 0.5
         print(f"目标高度: {target_altitude}m\n")
         
         # 启动起飞
@@ -86,7 +86,7 @@ if fb.connect():
         print("[4/4] 测试 send_body_velocity...")
         start = time.time()
         while time.time() - start < 4.0:
-            fb.send_body_velocity(0.0, 0.0, 0.0, 0.5)
+            fb.send_body_velocity(0.0, 0.0, -0.1, 0.0)
             time.sleep(0.2)  # 5Hz
 
         fb.send_body_velocity(0.0, 0.0, 0.0, 0.0)

@@ -179,6 +179,24 @@ def test_split_record_paths_places_outputs_under_hud_subdirs():
     assert non_hud == "logs/hud_live_test/non_hud/live_hud.avi"
 
 
+def test_make_controller_uses_default_live_y_axis_sign():
+    from utils.config_manager import ConfigManager
+
+    config = ConfigManager("config/default.yaml")
+    controller = run_visual_hud.make_controller(config, "pickup_align")
+
+    vx, vy, vyaw = controller.compute_velocity(
+        {"u": 160.0, "v": 80.0, "theta": 0.0},
+        center_u=160.0,
+        center_v=120.0,
+        dt=0.1,
+    )
+
+    assert vx == 0.0
+    assert vy < 0.0
+    assert vyaw == 0.0
+
+
 def test_pickup_target_controls_hud_velocity_and_error_arrow(monkeypatch, tmp_path):
     streamer, visualizer = run_hud_once(monkeypatch, tmp_path, target="pickup_zone")
 
@@ -221,9 +239,11 @@ def test_delivery_target_controls_hud_velocity_and_error_arrow(monkeypatch, tmp_
     first_hud = visualizer.hud_infos[0]
     assert first_hud["target"] == "delivery_zone"
     assert first_hud["conf"] == 0.84
-    assert first_hud["vy"] > 0.0
+    assert first_hud["vx"] > 0.0
+    assert first_hud["vy"] == 0.0
     assert first_hud["vyaw"] > 0.0
-    assert first_hud["err_y"] == 76.0
+    assert first_hud["err_x"] == 76.0
+    assert first_hud["err_y"] == 0.0
     assert first_hud["err_yaw"] == 0.12
 
     assert "pickup_zone" in visualizer.obb_labels
@@ -251,9 +271,11 @@ def test_debug_targets_all_outputs_velocity_and_arrows_for_both_targets(monkeypa
     assert target_debugs["pickup_zone"]["conf"] == 0.92
     assert target_debugs["delivery_zone"]["active"] is False
     assert target_debugs["delivery_zone"]["conf"] == 0.84
-    assert target_debugs["delivery_zone"]["vy"] > 0.0
+    assert target_debugs["delivery_zone"]["vx"] > 0.0
+    assert target_debugs["delivery_zone"]["vy"] == 0.0
     assert target_debugs["delivery_zone"]["vyaw"] > 0.0
-    assert target_debugs["delivery_zone"]["err_y"] == 76.0
+    assert target_debugs["delivery_zone"]["err_x"] == 76.0
+    assert target_debugs["delivery_zone"]["err_y"] == 0.0
 
     first_frame_targets = visualizer.error_targets[:2]
     assert len(first_frame_targets) == 2

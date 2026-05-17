@@ -25,15 +25,19 @@ perception:
 # ======== M3：PD 视觉伺服控制器（按任务阶段分组） ========
 servo:
   pickup_align:                                  # 取货区对准阶段参数
-    kp: { x: 0.003, y: 0.003, yaw: 0.6 }
-    kd: { x: 0.001, y: 0.001, yaw: 0.1 }
-    deadband: { x: 30, y: 30, yaw: 0.1 }        # 取货区较大，精度要求适中
-    max_vel: { x: 0.3, y: 0.3, yaw: 0.5 }       # 饱和限幅（m/s 或 rad/s）
+    axis_map: "swap_xy"                         # 实测外置摄像头安装方向：图像横向->vx，图像纵向->vy
+    axis_sign: { x: 1, y: -1, yaw: -1 }         # 实测外置摄像头 y/yaw 控制符号需要反向
+    kp: { x: 0.003, y: 0.003, yaw: 0.3 }
+    kd: { x: 0.001, y: 0.001, yaw: 0.0 }
+    deadband: { x: 30, y: 30, yaw: 0.15 }       # 取货区较大，精度要求适中
+    max_vel: { x: 0.3, y: 0.3, yaw: 0.10 }      # 饱和限幅（m/s 或 rad/s）
   delivery_align:                                # 投递区对准阶段参数（规格与取货区相仿）
-    kp: { x: 0.003, y: 0.003, yaw: 0.6 }
-    kd: { x: 0.001, y: 0.001, yaw: 0.1 }
-    deadband: { x: 30, y: 30, yaw: 0.1 }
-    max_vel: { x: 0.3, y: 0.3, yaw: 0.5 }
+    axis_map: "swap_xy"
+    axis_sign: { x: 1, y: -1, yaw: -1 }
+    kp: { x: 0.003, y: 0.003, yaw: 0.3 }
+    kd: { x: 0.001, y: 0.001, yaw: 0.0 }
+    deadband: { x: 30, y: 30, yaw: 0.15 }
+    max_vel: { x: 0.3, y: 0.3, yaw: 0.10 }
 
 # ======== M4：MAVLink 通信 ========
 mavlink:
@@ -48,9 +52,29 @@ mavlink:
 fsm:
   align_hold_time_s: 1.5                         # 对齐防抖持续时间（秒）
   target_lost_hover_s: 1.0                       # 短时丢失 → 悬停阈值
-  target_lost_climb_s: 3.0                       # 长时丢失 → 爬升阈值
+  target_lost_climb_s: 2.0                       # 长时丢失 → 爬升阈值
   climb_vz: -0.2                                 # 爬升速度（m/s，NED 下为负）
   tick_rate_hz: 15                               # 主循环频率上限
+
+  reset_timeout_s: 30.0
+
+mission:
+  profile: "standard"
+  camera_link_loss_timeout_s: 5.0
+  max_flight_alt_m: 0.5
+  pre_pickup_forward_m: 0.5
+  pre_pickup_speed_mps: 0.2
+  no_mcu_pickup_use_land_mode: false
+  no_mcu_pickup_touchdown_alt_m: 0.08
+  no_mcu_pickup_touchdown_hold_s: 0.4
+  no_mcu_pickup_min_descend_s: 0.8
+  no_mcu_pickup_descend_vz_mps: 0.12
+  no_mcu_pickup_descend_timeout_s: 8.0
+  no_mcu_retakeoff_climb_vz_mps: 0.10
+  no_mcu_ignore_yaw_alignment: false
+  no_mcu_retakeoff_delay_s: 2.0          # pickup 落地后等待飞控稳定再二次起飞
+  no_mcu_retakeoff_wait_timeout_s: 12.0  # 等待解锁/稳定超时后中止任务
+  no_mcu_retakeoff_require_disarmed: true
 
 # ======== 日志系统 ========
 logging:
@@ -67,9 +91,9 @@ perf:
 
 # ======== 图像参数（单摄像头） ========
 camera:
-  resolution: { w: 640, h: 480 }
-  center_u: 320                                  # 光学中心 u 坐标
-  center_v: 240                                  # 光学中心 v 坐标
+  resolution: { w: 320, h: 240 }
+  center_u: 160                                  # 光学中心 u 坐标
+  center_v: 120                                  # 光学中心 v 坐标
   offset: { x: 0.0, y: 0.0 }                    # 外侧安装偏移（米），Phase 3 实测填入
 
 # ======== 末端执行器（叉式托举机构） ========
@@ -80,7 +104,8 @@ gripper:
 
 # ======== 飞行控制（FlightBridge 使用） ========
 flight:
-  takeoff_alt: 1.5              # 默认任务高度 (m)
+  takeoff_alt: 0.5              # 默认任务高度 (m)
+  takeoff_alt_tolerance_m: 0.12 # 低空起飞到达判定容差 (m)
   land_detect_alt: 0.15         # 触地判定高度阈值 (m)
   arm_timeout_s: 10             # 解锁等待超时 (s)
   takeoff_timeout_s: 15         # 起飞等待超时 (s)
@@ -104,7 +129,7 @@ mcu:
 
 # ======== 定距转移 ========
 transfer:
-  delivery_distance_m: 3.0      # 取货区到投递区预设距离 (m)
+  delivery_distance_m: 1.2      # 取货区到投递区预设距离 (m)
   transfer_speed: 0.3           # 转移飞行速度 (m/s)
-  transfer_alt: 1.5             # 转移飞行高度 (m)
+  transfer_alt: 0.5             # 转移飞行高度 (m)
   transfer_heading_deg: 0       # 转移飞行航向 (deg)，待实测确定

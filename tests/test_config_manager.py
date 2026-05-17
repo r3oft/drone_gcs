@@ -266,7 +266,10 @@ class TestDefaultYAMLIntegration:
         """伺服控制器 PD 增益应为设计文档指定的默认值（pickup_align 阶段）。"""
         assert default_config.get("servo.pickup_align.kp.x") == 0.003
         assert default_config.get("servo.pickup_align.kp.y") == 0.003
-        assert default_config.get("servo.pickup_align.kp.yaw") == 0.6
+        assert default_config.get("servo.pickup_align.kp.yaw") == 0.3
+        assert default_config.get("servo.pickup_align.kd.yaw") == 0.0
+        assert default_config.get("servo.pickup_align.deadband.yaw") == 0.15
+        assert default_config.get("servo.pickup_align.axis_sign.yaw") == -1
 
     def test_fsm_tick_rate(self, default_config):
         """主循环频率应为 15 Hz。"""

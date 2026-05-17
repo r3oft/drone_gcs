@@ -10,6 +10,7 @@ class VisualServoController:
     """
 
     _AXIS_COUNT = 3  # x, y, yaw
+    _VALID_AXIS_MAPS = {"standard", "swap_xy"}
 
     def __init__(
         self,
@@ -17,6 +18,8 @@ class VisualServoController:
         kd: list[float],
         deadband: list[float],
         max_vel: list[float],
+        axis_map: str = "standard",
+        axis_sign: list[float] = None,
     ) -> None:
         """
         Args:
@@ -24,6 +27,10 @@ class VisualServoController:
             kd:       微分增益 [kd_x, kd_y, kd_yaw]
             deadband: 死区阈值 [db_x, db_y, db_yaw]（像素/弧度）
             max_vel:  饱和限幅 [max_vx, max_vy, max_vyaw]（m/s 或 rad/s）
+            axis_map: 图像误差到机体系速度轴的映射：
+                      "standard"：图像纵向 -> vx，图像横向 -> vy
+                      "swap_xy"： 图像横向 -> vx，图像纵向 -> vy
+            axis_sign: 各控制轴符号 [sign_x, sign_y, sign_yaw]，每项为 +1 或 -1
 
         Raises:
             ValueError: 列表长度不为 3 / deadband 含负值 / max_vel 含非正值
@@ -46,10 +53,28 @@ class VisualServoController:
                     f"max_vel[{i}] 必须 > 0，收到: {val}"
                 )
 
+        if axis_map not in self._VALID_AXIS_MAPS:
+            raise ValueError(
+                f"axis_map 必须是 {sorted(self._VALID_AXIS_MAPS)} 之一，收到: {axis_map!r}"
+            )
+        if axis_sign is None:
+            axis_sign = [1.0, 1.0, 1.0]
+        if len(axis_sign) != self._AXIS_COUNT:
+            raise ValueError(
+                f"axis_sign 长度必须为 {self._AXIS_COUNT}，收到长度 {len(axis_sign)}"
+            )
+        for i, val in enumerate(axis_sign):
+            if float(val) not in (-1.0, 1.0):
+                raise ValueError(
+                    f"axis_sign[{i}] 必须为 +1 或 -1，收到: {val}"
+                )
+
         self._kp: list[float] = list(kp)
         self._kd: list[float] = list(kd)
         self._deadband: list[float] = list(deadband)
         self._max_vel: list[float] = list(max_vel)
+        self._axis_map = axis_map
+        self._axis_sign: list[float] = [float(v) for v in axis_sign]
 
         self._prev_errors: list[float] = [0.0] * self._AXIS_COUNT
 
@@ -81,11 +106,20 @@ class VisualServoController:
         dt: float,
     ) -> dict:
         """Compute PD output and return intermediate terms for HUD/debugging."""
-        error_x, error_y = pixel_to_body_error(
+        error_forward, error_right = pixel_to_body_error(
             target_pose["u"], target_pose["v"],
             center_u, center_v,
         )
         error_yaw = -target_pose["theta"]
+
+        if self._axis_map == "swap_xy":
+            error_x, error_y = error_right, error_forward
+        else:
+            error_x, error_y = error_forward, error_right
+
+        error_x *= self._axis_sign[0]
+        error_y *= self._axis_sign[1]
+        error_yaw *= self._axis_sign[2]
 
         raw_errors = [error_x, error_y, error_yaw]
 

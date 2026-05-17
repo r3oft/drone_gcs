@@ -114,6 +114,26 @@ class TestInit:
                 deadband=DEFAULT_DB, max_vel=[0.3, -0.1, 0.5],
             )
 
+    def test_t8b_axis_sign_wrong_length(self):
+        with pytest.raises(ValueError, match="axis_sign"):
+            VisualServoController(
+                kp=DEFAULT_KP,
+                kd=DEFAULT_KD,
+                deadband=DEFAULT_DB,
+                max_vel=DEFAULT_MV,
+                axis_sign=[1.0, -1.0],
+            )
+
+    def test_t8c_axis_sign_invalid_value(self):
+        with pytest.raises(ValueError, match="axis_sign"):
+            VisualServoController(
+                kp=DEFAULT_KP,
+                kd=DEFAULT_KD,
+                deadband=DEFAULT_DB,
+                max_vel=DEFAULT_MV,
+                axis_sign=[1.0, 0.0, 1.0],
+            )
+
 
 # =====================================================================
 #  T9–T13：compute_velocity 基础行为
@@ -159,6 +179,42 @@ class TestComputeVelocityBasic:
         assert vx == 0.0
         assert vy == 0.0
         assert vz < 0, "正偏航角 → 负角速度修正"
+
+    def test_t13b_swap_xy_axis_map(self):
+        """T13b — 实测摄像头安装方向：目标偏右→vx>0，目标偏上→vy>0。"""
+        ctrl = VisualServoController(
+            kp=DEFAULT_KP,
+            kd=[0.0, 0.0, 0.0],
+            deadband=DEFAULT_DB,
+            max_vel=DEFAULT_MV,
+            axis_map="swap_xy",
+            axis_sign=[1.0, 1.0, 1.0],
+        )
+
+        vx, vy, vz = ctrl.compute_velocity(make_pose(u=360, v=CV), CU, CV, dt=0.067)
+        assert vx > 0.0
+        assert vy == 0.0
+        assert vz == 0.0
+
+        vx, vy, vz = ctrl.compute_velocity(make_pose(u=CU, v=200), CU, CV, dt=0.067)
+        assert vx == 0.0
+        assert vy > 0.0
+        assert vz == 0.0
+
+    def test_t13c_swap_xy_with_inverted_y_axis_sign(self):
+        ctrl = VisualServoController(
+            kp=DEFAULT_KP,
+            kd=[0.0, 0.0, 0.0],
+            deadband=DEFAULT_DB,
+            max_vel=DEFAULT_MV,
+            axis_map="swap_xy",
+            axis_sign=[1.0, -1.0, 1.0],
+        )
+
+        vx, vy, vz = ctrl.compute_velocity(make_pose(u=CU, v=200), CU, CV, dt=0.067)
+        assert vx == 0.0
+        assert vy < 0.0
+        assert vz == 0.0
 
 
 # =====================================================================
@@ -394,6 +450,8 @@ class TestIntegrationWithConfig:
             kd=[config.get("servo.pickup_align.kd.x"), config.get("servo.pickup_align.kd.y"), config.get("servo.pickup_align.kd.yaw")],
             deadband=[config.get("servo.pickup_align.deadband.x"), config.get("servo.pickup_align.deadband.y"), config.get("servo.pickup_align.deadband.yaw")],
             max_vel=[config.get("servo.pickup_align.max_vel.x"), config.get("servo.pickup_align.max_vel.y"), config.get("servo.pickup_align.max_vel.yaw")],
+            axis_map=config.get("servo.pickup_align.axis_map", "standard"),
+            axis_sign=[config.get("servo.pickup_align.axis_sign.x", 1), config.get("servo.pickup_align.axis_sign.y", 1), config.get("servo.pickup_align.axis_sign.yaw", 1)],
         )
 
     def test_t30_config_instantiation(self, config_ctrl):
@@ -403,18 +461,18 @@ class TestIntegrationWithConfig:
     def test_t31_full_pipeline_m2_to_m3(self, config_ctrl):
         """T31 — 模拟 M2→M3 完整 Pipeline：输出方向正确、幅值在安全包线内。"""
         # 模拟 M2 输出：目标偏右上，有轻微偏航
-        target = {"u": 380.0, "v": 180.0, "theta": 0.15, "conf": 0.85}
+        target = {"u": 380.0, "v": 300.0, "theta": 0.30, "conf": 0.85}
         vx, vy, vz = config_ctrl.compute_velocity(target, 320.0, 240.0, dt=0.067)
 
         # 方向验证
         assert vx > 0, "目标偏上 → 前飞"
         assert vy > 0, "目标偏右 → 右移"
-        assert vz < 0, "正偏航 → 逆时针修正"
+        assert vz > 0, "配置的 yaw 符号已反向，正 theta 应输出正 yaw_rate"
 
         # 安全包线验证
         assert abs(vx) <= 0.3
         assert abs(vy) <= 0.3
-        assert abs(vz) <= 0.5
+        assert abs(vz) <= 0.10
 
     def test_t32_alignment_complete_all_zero(self, config_ctrl):
         """T32 — 对齐完成场景：误差全在死区内 → 输出全零 → M5 可判定防抖跃迁完成。"""

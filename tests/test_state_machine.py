@@ -37,6 +37,8 @@ class StubFlightBridge:
         self.land_return = True
         self.set_mode_return = True
         self.connect_count = 0
+        self.land_count = 0
+        self.takeoff_targets: list[float] = []
         self.set_mode_calls: list[str] = []
 
     def connect(self) -> bool:
@@ -46,12 +48,14 @@ class StubFlightBridge:
         return self.connect_return
 
     def arm_and_takeoff(self, target_alt: float) -> bool:
+        self.takeoff_targets.append(target_alt)
         return self.takeoff_return
 
     def send_body_velocity(self, vx, vy, vz, yaw_rate) -> None:
         self.velocity_log.append((vx, vy, vz, yaw_rate))
 
     def land(self) -> bool:
+        self.land_count += 1
         return self.land_return
 
     def set_mode(self, mode: str) -> bool:
@@ -135,11 +139,29 @@ class StubConfig:
     """配置管理器 Stub，返回默认值。"""
 
     _DEFAULTS = {
+        "mission.profile": "standard",
+        "mission.camera_link_loss_timeout_s": 5.0,
+        "mission.max_flight_alt_m": 0.5,
+        "mission.pre_pickup_forward_m": 0.0,
+        "mission.pre_pickup_speed_mps": 0.2,
+        "mission.no_mcu_pickup_use_land_mode": False,
+        "mission.no_mcu_pickup_touchdown_alt_m": 0.08,
+        "mission.no_mcu_pickup_touchdown_hold_s": 0.4,
+        "mission.no_mcu_pickup_min_descend_s": 0.8,
+        "mission.no_mcu_pickup_descend_vz_mps": 0.12,
+        "mission.no_mcu_pickup_descend_timeout_s": 8.0,
+        "mission.no_mcu_retakeoff_climb_vz_mps": 0.2,
+        "mission.no_mcu_ignore_yaw_alignment": False,
+        "mission.no_mcu_retakeoff_delay_s": 2.0,
+        "mission.no_mcu_retakeoff_wait_timeout_s": 12.0,
+        "mission.no_mcu_retakeoff_require_disarmed": True,
         "fsm.align_hold_time_s": 1.5,
         "fsm.target_lost_hover_s": 1.0,
         "fsm.target_lost_climb_s": 3.0,
         "fsm.climb_vz": -0.2,
+        "fsm.reset_timeout_s": 30.0,
         "flight.takeoff_alt": 1.5,
+        "flight.takeoff_alt_tolerance_m": 0.12,
         "flight.land_detect_alt": 0.15,
         "mcu.grab_timeout_s": 10.0,
         "mcu.release_timeout_s": 10.0,
@@ -154,8 +176,14 @@ class StubConfig:
         "logging.enable_flight_recorder": False,  # 测试中禁用黑匣子
     }
 
+    def __init__(self):
+        self._defaults = dict(self._DEFAULTS)
+
+    def set(self, key, value):
+        self._defaults[key] = value
+
     def get(self, key, default=None):
-        return self._DEFAULTS.get(key, default)
+        return self._defaults.get(key, default)
 
 
 # ═══════════════════════════════════════════════════════
@@ -260,9 +288,20 @@ class TestResetToInbound:
         fsm.tick(DUMMY_FRAME)
 
         # 模拟超时：将进入时间设到很久以前
-        fsm._state_enter_time = time.time() - 60
+        fsm._mcu_cmd_time = time.time() - 60
         fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.EMERGENCY
+
+    def test_slow_reset_connect_does_not_spend_response_timeout(self, fsm, flight, mcu):
+        advance_to_state(fsm, flight, mcu, FlightState.RESET)
+        fsm._state_enter_time = time.time() - 60
+
+        fsm.tick(DUMMY_FRAME)
+        assert fsm.state == FlightState.RESET
+
+        mcu.set_responses(MCUResponse.RESET_DONE)
+        fsm.tick(DUMMY_FRAME)
+        assert fsm.state == FlightState.INBOUND
 
 
 class TestInboundToAlign:
@@ -295,6 +334,35 @@ class TestInboundToAlign:
         fsm._mcu_cmd_time = time.time() - 20
         fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.EMERGENCY
+
+    def test_inbound_accepts_low_altitude_tolerance(self, fsm, flight):
+        advance_to_state(fsm, flight, None, FlightState.INBOUND)
+        flight.takeoff_return = None
+        flight._telemetry["alt"] = 0.39
+
+        fsm.tick(DUMMY_FRAME)
+
+        assert fsm.state == FlightState.TASK_REC_ALIGN
+
+    def test_inbound_runs_pre_pickup_forward_transfer(self, flight, mcu, perception, controller, config):
+        config.set("mission.pre_pickup_forward_m", 0.5)
+        config.set("mission.pre_pickup_speed_mps", 0.25)
+        fsm = GlobalFSM(flight, mcu, perception, controller, config)
+        advance_to_state(fsm, flight, mcu, FlightState.INBOUND)
+        flight.takeoff_return = None
+        flight._telemetry["alt"] = 0.5
+
+        fsm.tick(DUMMY_FRAME)
+
+        assert fsm.state == FlightState.INBOUND
+        assert fsm._inbound_takeoff_done is True
+        assert flight.velocity_log[-1] == (0.25, 0, 0, 0)
+
+        fsm._inbound_transfer_start_time = time.time() - 3.0
+        fsm.tick(DUMMY_FRAME)
+
+        assert fsm.state == FlightState.TASK_REC_ALIGN
+        assert flight.velocity_log[-1] == (0, 0, 0, 0)
 
     def test_inbound_takeoff_fail(self, fsm, flight):
         advance_to_state(fsm, flight, None, FlightState.INBOUND)
@@ -336,6 +404,218 @@ class TestAlignDebounce:
         fsm.tick(DUMMY_FRAME)
         assert fsm._align_stable_start == 0.0
         assert fsm.state == FlightState.TASK_REC_ALIGN
+
+
+class TestNoMCUFlightProfile:
+    def test_max_flight_alt_caps_takeoff_and_transfer_altitudes(
+        self, flight, mcu, perception, controller, config
+    ):
+        config.set("flight.takeoff_alt", 1.5)
+        config.set("transfer.transfer_alt", 1.2)
+        config.set("mission.max_flight_alt_m", 0.5)
+
+        fsm = GlobalFSM(flight, mcu, perception, controller, config)
+
+        assert fsm._takeoff_alt == 0.5
+        assert fsm._transfer_alt == 0.5
+
+    def test_pickup_align_enters_guided_descend_and_skips_grab(
+        self, flight, mcu, perception, controller, config
+    ):
+        config.set("mission.profile", "no_mcu_flight_test")
+        fsm = GlobalFSM(flight, mcu, perception, controller, config)
+        advance_to_state(fsm, flight, mcu, FlightState.TASK_REC_ALIGN)
+        controller.velocity = (0.0, 0.0, 0.0)
+
+        fsm.tick(DUMMY_FRAME)
+        fsm._align_stable_start = time.time() - 2.0
+        fsm.tick(DUMMY_FRAME)
+
+        assert flight.land_count == 0
+        assert fsm.state == FlightState.TASK_REC_DESCEND
+        assert MCUCommand.START_GRAB not in mcu.command_log
+        assert fsm._post_land_wait_required is False
+
+    def test_no_mcu_guided_pickup_descend_transitions_near_ground(
+        self, flight, mcu, perception, controller, config
+    ):
+        config.set("mission.profile", "no_mcu_flight_test")
+        fsm = GlobalFSM(flight, mcu, perception, controller, config)
+        advance_to_state(fsm, flight, mcu, FlightState.TASK_REC_DESCEND)
+        flight._telemetry["alt"] = 0.5
+
+        fsm.tick(DUMMY_FRAME)
+
+        assert fsm.state == FlightState.TASK_REC_DESCEND
+        assert flight.land_count == 0
+        assert flight.velocity_log[-1] == (0, 0, 0.12, 0)
+
+        flight._telemetry["alt"] = 0.05
+        fsm._no_mcu_pickup_descend_start_time = time.time() - 1.0
+        fsm.tick(DUMMY_FRAME)
+        assert fsm.state == FlightState.TASK_REC_DESCEND
+
+        fsm._no_mcu_pickup_touchdown_start_time = time.time() - 1.0
+        fsm.tick(DUMMY_FRAME)
+
+        assert fsm.state == FlightState.TRANS_DELIVERY
+        assert flight.land_count == 0
+        assert flight.velocity_log[-1] == (0, 0, 0, 0)
+        assert MCUCommand.START_GRAB not in mcu.command_log
+
+    def test_no_mcu_pickup_align_requires_yaw_zero_by_default(
+        self, flight, mcu, perception, controller, config
+    ):
+        config.set("mission.profile", "no_mcu_flight_test")
+        fsm = GlobalFSM(flight, mcu, perception, controller, config)
+        advance_to_state(fsm, flight, mcu, FlightState.TASK_REC_ALIGN)
+        controller.velocity = (0.0, 0.0, 0.5)
+
+        fsm.tick(DUMMY_FRAME)
+
+        assert fsm.state == FlightState.TASK_REC_ALIGN
+        assert fsm._align_stable_start == 0.0
+        assert flight.velocity_log[-1] == (0.0, 0.0, 0.0, 0.5)
+
+    def test_no_mcu_delivery_align_requires_yaw_zero_by_default(
+        self, flight, mcu, perception, controller, config
+    ):
+        config.set("mission.profile", "no_mcu_flight_test")
+        fsm = GlobalFSM(flight, mcu, perception, controller, config)
+        advance_to_state(fsm, flight, mcu, FlightState.TASK_REL_ALIGN)
+        controller.velocity = (0.0, 0.0, -0.5)
+
+        fsm.tick(DUMMY_FRAME)
+
+        assert fsm.state == FlightState.TASK_REL_ALIGN
+        assert fsm._align_stable_start == 0.0
+        assert flight.velocity_log[-1] == (0.0, 0.0, 0.0, -0.5)
+
+    def test_no_mcu_can_explicitly_ignore_yaw_error(
+        self, flight, mcu, perception, controller, config
+    ):
+        config.set("mission.profile", "no_mcu_flight_test")
+        config.set("mission.no_mcu_ignore_yaw_alignment", True)
+        fsm = GlobalFSM(flight, mcu, perception, controller, config)
+        advance_to_state(fsm, flight, mcu, FlightState.TASK_REC_ALIGN)
+        controller.velocity = (0.0, 0.0, 0.5)
+
+        fsm.tick(DUMMY_FRAME)
+
+        assert fsm.state == FlightState.TASK_REC_ALIGN
+        assert fsm._align_stable_start > 0
+        assert flight.velocity_log[-1] == (0.0, 0.0, 0.0, 0.0)
+
+        fsm._align_stable_start = time.time() - 2.0
+        fsm.tick(DUMMY_FRAME)
+
+        assert fsm.state == FlightState.TASK_REC_DESCEND
+
+    def test_standard_align_still_requires_yaw_zero(
+        self, fsm, flight, controller
+    ):
+        advance_to_state(fsm, flight, None, FlightState.TASK_REL_ALIGN)
+        controller.velocity = (0.0, 0.0, 0.5)
+
+        fsm.tick(DUMMY_FRAME)
+
+        assert fsm.state == FlightState.TASK_REL_ALIGN
+        assert fsm._align_stable_start == 0.0
+        assert flight.velocity_log[-1] == (0.0, 0.0, 0.0, 0.5)
+
+    def test_no_mcu_pickup_can_still_use_legacy_land_mode(
+        self, flight, mcu, perception, controller, config
+    ):
+        config.set("mission.profile", "no_mcu_flight_test")
+        config.set("mission.no_mcu_pickup_use_land_mode", True)
+        fsm = GlobalFSM(flight, mcu, perception, controller, config)
+        advance_to_state(fsm, flight, mcu, FlightState.TASK_REC_ALIGN)
+        controller.velocity = (0.0, 0.0, 0.0)
+
+        fsm.tick(DUMMY_FRAME)
+        fsm._align_stable_start = time.time() - 2.0
+        fsm.tick(DUMMY_FRAME)
+
+        assert flight.land_count == 1
+        assert fsm.state == FlightState.TRANS_DELIVERY
+        assert fsm._post_land_wait_required is True
+
+    def test_no_mcu_trans_delivery_climbs_without_rearming_when_still_armed(
+        self, flight, mcu, perception, controller, config
+    ):
+        config.set("mission.profile", "no_mcu_flight_test")
+        fsm = GlobalFSM(flight, mcu, perception, controller, config)
+        advance_to_state(fsm, flight, mcu, FlightState.TRANS_DELIVERY)
+        flight._telemetry["armed"] = True
+        flight._telemetry["mode"] = FlightMode.GUIDED
+        flight._telemetry["alt"] = 0.05
+
+        fsm.tick(DUMMY_FRAME)
+
+        assert fsm.state == FlightState.TRANS_DELIVERY
+        assert flight.takeoff_targets == []
+        assert flight.velocity_log[-1] == (0, 0, -0.2, 0)
+
+        flight._telemetry["alt"] = 0.5
+        fsm.tick(DUMMY_FRAME)
+
+        assert fsm._transfer_takeoff_done is True
+        assert flight.takeoff_targets == []
+        assert flight.velocity_log[-1] == (0, 0, 0, 0)
+
+    def test_no_mcu_trans_delivery_waits_for_disarm_before_second_takeoff(
+        self, flight, mcu, perception, controller, config
+    ):
+        config.set("mission.profile", "no_mcu_flight_test")
+        fsm = GlobalFSM(flight, mcu, perception, controller, config)
+        advance_to_state(fsm, flight, mcu, FlightState.TRANS_DELIVERY)
+        fsm._post_land_wait_required = True
+        fsm._post_land_wait_start_time = time.time() - 3.0
+        flight._telemetry["mode"] = FlightMode.LAND
+        flight._telemetry["armed"] = True
+        flight._telemetry["alt"] = 0.0
+
+        fsm.tick(DUMMY_FRAME)
+
+        assert fsm.state == FlightState.TRANS_DELIVERY
+        assert flight.takeoff_targets == []
+
+        flight._telemetry["armed"] = False
+        fsm.tick(DUMMY_FRAME)
+
+        assert flight.takeoff_targets == [0.5]
+
+    def test_no_mcu_trans_delivery_aborts_if_retakeoff_gate_times_out(
+        self, flight, mcu, perception, controller, config
+    ):
+        config.set("mission.profile", "no_mcu_flight_test")
+        config.set("mission.no_mcu_retakeoff_wait_timeout_s", 5.0)
+        fsm = GlobalFSM(flight, mcu, perception, controller, config)
+        advance_to_state(fsm, flight, mcu, FlightState.TRANS_DELIVERY)
+        fsm._post_land_wait_required = True
+        fsm._post_land_wait_start_time = time.time() - 6.0
+        flight._telemetry["mode"] = FlightMode.LAND
+        flight._telemetry["armed"] = True
+        flight._telemetry["alt"] = 0.0
+
+        fsm.tick(DUMMY_FRAME)
+
+        assert fsm.state == FlightState.IDLE
+        assert flight.takeoff_targets == []
+
+    def test_delivery_align_lands_and_skips_release(self, flight, mcu, perception, controller, config):
+        config.set("mission.profile", "no_mcu_flight_test")
+        fsm = GlobalFSM(flight, mcu, perception, controller, config)
+        advance_to_state(fsm, flight, mcu, FlightState.TASK_REL_ALIGN)
+        controller.velocity = (0.0, 0.0, 0.0)
+
+        fsm.tick(DUMMY_FRAME)
+        fsm._align_stable_start = time.time() - 2.0
+        fsm.tick(DUMMY_FRAME)
+
+        assert flight.land_count == 1
+        assert fsm.state == FlightState.IDLE
+        assert MCUCommand.START_RELEASE not in mcu.command_log
 
 
 class TestTargetLost:
@@ -745,6 +1025,57 @@ class TestFirstFrameTargetLoss:
         fsm.tick(None)
 
         assert flight.velocity_log[-1] == (0, 0, 0, 0)
+
+
+class TestCameraLinkLossFailsafe:
+    def test_missing_frame_immediately_hovers(self, fsm, flight, perception):
+        advance_to_state(fsm, flight, None, FlightState.TASK_REC_ALIGN)
+
+        def fail_if_called(frame, cls_id):
+            raise AssertionError("process_frame should not be called without a frame")
+
+        perception.process_frame = fail_if_called
+        flight.velocity_log.clear()
+
+        fsm.tick(None)
+
+        assert flight.velocity_log[-1] == (0, 0, 0, 0)
+        assert flight.land_count == 0
+        assert fsm.state == FlightState.TASK_REC_ALIGN
+
+    def test_missing_frame_before_timeout_does_not_land(self, fsm, flight):
+        advance_to_state(fsm, flight, None, FlightState.TASK_REC_ALIGN)
+        flight.velocity_log.clear()
+
+        fsm.tick(None)
+        fsm._camera_link_loss_start = time.time() - 4.0
+        fsm.tick(None)
+
+        assert flight.velocity_log[-1] == (0, 0, 0, 0)
+        assert flight.land_count == 0
+        assert fsm.state == FlightState.TASK_REC_ALIGN
+
+    def test_missing_frame_timeout_lands_and_aborts_to_idle(self, fsm, flight):
+        advance_to_state(fsm, flight, None, FlightState.TASK_REC_ALIGN)
+
+        fsm.tick(None)
+        fsm._camera_link_loss_start = time.time() - 6.0
+        fsm.tick(None)
+
+        assert flight.land_count == 1
+        assert fsm.state == FlightState.IDLE
+
+    def test_frame_recovery_clears_camera_loss_timer(self, fsm, flight):
+        advance_to_state(fsm, flight, None, FlightState.TASK_REC_ALIGN)
+
+        fsm.tick(None)
+        assert fsm._camera_link_loss_start > 0.0
+
+        fsm.tick(DUMMY_FRAME)
+
+        assert fsm._camera_link_loss_start == 0.0
+        assert flight.land_count == 0
+        assert fsm.state == FlightState.TASK_REC_ALIGN
 
 
 class TestMCUSendFailure:

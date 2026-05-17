@@ -200,20 +200,20 @@ class FlightBridge(IFlightBridge):
         logger.info(f"起飞到目标高度：{target_alt}m")
         vehicle.simple_takeoff(target_alt)
 
-        while True:
-            if time.time() - start_time > self.config.takeoff_timeout_s:
-                logger.error(f"takeoff timed out after {self.config.takeoff_timeout_s}s")
-                return False
+        # while True:
+        #     if time.time() - start_time > self.config.takeoff_timeout_s:
+        #         logger.error(f"takeoff timed out after {self.config.takeoff_timeout_s}s")
+        #         return False
 
-        #     current_alt = float(vehicle.location.global_relative_frame.alt or 0.0)
-        #     logger.debug(f"当前高度：{current_alt:.2f}m / 目标高度：{target_alt}m")
+        # #     current_alt = float(vehicle.location.global_relative_frame.alt or 0.0)
+        # #     logger.debug(f"当前高度：{current_alt:.2f}m / 目标高度：{target_alt}m")
 
-            logger.debug(f"Current altitude: {current_alt:.2f}m / target: {target_alt:.2f}m")
-            if current_alt >= target_alt * 0.95:
-                logger.info(f"Reached takeoff altitude: {current_alt:.2f}m")
-                return True
+        #     logger.debug(f"Current altitude: {current_alt:.2f}m / target: {target_alt:.2f}m")
+        #     if current_alt >= target_alt * 0.95:
+        #         logger.info(f"Reached takeoff altitude: {current_alt:.2f}m")
+        #         return True
 
-            time.sleep(0.5)
+        #     time.sleep(0.5)
 
     def send_body_velocity(
         self, vx: float, vy: float, vz: float, yaw_rate: float

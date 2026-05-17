@@ -201,6 +201,17 @@ class DebugVisualizer:
             lines.append(" | ".join(state_line))
         if "camera" in info:
             lines.append(f"Cam {info['camera']}")
+        flight_line = []
+        if "alt" in info:
+            flight_line.append(f"Alt {info['alt']:.2f}m")
+        if "local_alt" in info:
+            flight_line.append(f"L {info['local_alt']:.2f}m")
+        if "armed" in info:
+            flight_line.append("ARM" if info["armed"] else "DISARM")
+        if "heartbeat_ok" in info:
+            flight_line.append("HB ok" if info["heartbeat_ok"] else "HB lost")
+        if flight_line:
+            lines.append(" ".join(flight_line))
         target_line = []
         if "target" in info:
             target_line.append(f"T {info['target']}")
