@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 # 导入 dronekit 核心模块
 import dronekit
-from dronekit import Vehicle, VehicleMode, APIException, LocationGlobalRelative
+from dronekit import Vehicle, VehicleMode, APIException
 from pymavlink import mavutil
 import socket
 
@@ -22,24 +22,18 @@ class FlightConfig:
     """飞行控制配置项"""
     connection_string: str = "tcp:127.0.0.1:5760"  # 飞控连接串
     heartbeat_timeout: int = 60  # 连接心跳超时(s)
-<<<<<<< HEAD
     takeoff_timeout_s: int = 30  # 起飞超时(s)
     land_timeout_s: int = 60  # 降落超时(s)
     land_detect_alt: float = 0.1  # 触地检测高度(m)
     pixhawk_baud: int = 57600  # Pixhawk 串口波特率
     mcu_serial_port: int = 4  # Pico 2 连接的 Pixhawk UART 端口
     mcu_baudrate: int = 115200  # Pico 2 波特率
+    goto_vertical_speed: float = 0.15
+    goto_alt_tolerance: float = 0.05
+    goto_command_hz: float = 5.0
     reconnect_enabled: bool = False
     reconnect_max_attempts: int = 3
     reconnect_backoff_s: float = 1.0
-=======
-    takeoff_timeout_s: int = 30  # 起飞超时(s)
-    land_timeout_s: int = 60  # 降落超时(s)
-    land_detect_alt: float = 0.1  # 触地检测高度(m)
-    pixhawk_baud: int = 57600  # Pixhawk 串口波特率
-    mcu_serial_port: int = 3  # Pico 2 连接的 Pixhawk UART 端口（SERIAL3）
-    mcu_baudrate: int = 57600  # Pico 2 波特率
->>>>>>> 941ea95 (完整的起飞降落代码，simple_goto代码待debug)
 
 
 class FlightBridge(IFlightBridge):
@@ -139,7 +133,6 @@ class FlightBridge(IFlightBridge):
                 return False
             time.sleep(0.5)
 
-<<<<<<< HEAD
         # 4. 执行起飞
         logger.info(f"起飞到目标高度：{target_alt}m")
         vehicle.simple_takeoff(target_alt)
@@ -158,29 +151,6 @@ class FlightBridge(IFlightBridge):
                 return True
 
             time.sleep(0.5)
-=======
-        # 4. 执行起飞
-        logger.info(f"起飞到目标高度：{target_alt}m")
-        vehicle.simple_takeoff(target_alt)
-            
-        # 5. 等待到达目标高度
-        # while True:
-        #     # 检查超时
-        #     if time.time() - start_time > self.config.takeoff_timeout_s:
-        #         logger.error(f"起飞超时：{self.config.takeoff_timeout_s}s 未到达目标高度")
-        #         return False
-
-        #     # 获取当前相对高度
-        #     current_alt = vehicle.location.global_relative_frame.alt
-        #     logger.debug(f"当前高度：{current_alt:.2f}m / 目标高度：{target_alt}m")
-
-        #     # 高度达标（95%）则返回成功
-        #     if current_alt >= target_alt * 0.95:
-        #         logger.info(f"到达目标高度：{current_alt:.2f}m")
-        #         return True
-
-        #     time.sleep(0.5)
->>>>>>> 941ea95 (完整的起飞降落代码，simple_goto代码待debug)
 
     def send_body_velocity(
         self, vx: float, vy: float, vz: float, yaw_rate: float
@@ -296,6 +266,23 @@ class FlightBridge(IFlightBridge):
                 return False
             time.sleep(0.5)
 
+        logger.info("Waiting for landing touchdown...")
+        while True:
+            if time.time() - start_time > self.config.land_timeout_s:
+                logger.error(f"Landing timed out after {self.config.land_timeout_s}s")
+                return False
+
+            if not vehicle.armed:
+                logger.info("Vehicle disarmed; landing confirmed")
+                return True
+
+            current_alt = vehicle.location.global_relative_frame.alt
+            if current_alt is not None and current_alt < self.config.land_detect_alt:
+                logger.info(f"Altitude below land threshold: {current_alt:.2f}m")
+                return True
+
+            time.sleep(0.5)
+
     def simple_goto(self, target_alt: float) -> bool:
         """
         维持当前位置，仅改变相对高度（基于 simple_goto）
@@ -308,46 +295,44 @@ class FlightBridge(IFlightBridge):
             logger.error("目标高度必须大于等于0")
             return False
 
+        return self._simple_goto_velocity(target_alt)
+
+    def _simple_goto_velocity(self, target_alt: float) -> bool:
+        """Adjust relative altitude using streamed vertical velocity commands."""
         vehicle = self._vehicle
-        current = vehicle.location.global_relative_frame
-        target = LocationGlobalRelative(current.lat, current.lon, target_alt)
+        if vehicle.mode.name not in ["GUIDED", "GUIDED_NOGPS"]:
+            logger.info("Switching to GUIDED before altitude adjustment")
+            if not self.set_mode("GUIDED"):
+                return False
 
-        logger.info(f"simple_goto 目标高度：{target_alt}m")
-        vehicle.simple_goto(target)
+        speed = max(0.01, abs(self.config.goto_vertical_speed))
+        tolerance = max(0.01, abs(self.config.goto_alt_tolerance))
+        command_hz = max(1.0, self.config.goto_command_hz)
+        command_interval = 1.0 / command_hz
 
+        logger.info(f"Adjusting altitude to {target_alt:.2f}m with vertical velocity")
         start_time = time.time()
         while True:
             if time.time() - start_time > self.config.takeoff_timeout_s:
-                logger.error("simple_goto 超时：未到达目标高度")
+                logger.error("simple_goto timed out before reaching target altitude")
+                self.send_body_velocity(0, 0, 0, 0)
                 return False
 
             current_alt = vehicle.location.global_relative_frame.alt
-            if current_alt is not None and abs(current_alt - target_alt) <= 0.05:
-                logger.info(f"simple_goto 到达目标高度：{current_alt:.2f}m")
-                return True
-
-            time.sleep(0.5)
-
-        # 2. 等待触地
-        logger.info("等待降落触地...")
-        while True:
-            # 检查超时
-            if time.time() - start_time > self.config.land_timeout_s:
-                logger.error(f"降落超时：{self.config.land_timeout_s}s 未触地")
+            if current_alt is None:
+                logger.error("simple_goto cannot read current relative altitude")
+                self.send_body_velocity(0, 0, 0, 0)
                 return False
 
-            # 条件1：飞控解除解锁状态
-            if not vehicle.armed:
-                logger.info("飞控已解锁，确认触地")
+            error = target_alt - float(current_alt)
+            if abs(error) <= tolerance:
+                self.send_body_velocity(0, 0, 0, 0)
+                logger.info(f"simple_goto reached altitude: {current_alt:.2f}m")
                 return True
 
-            # 条件2：相对高度低于触地检测阈值
-            current_alt = vehicle.location.global_relative_frame.alt
-            if current_alt < self.config.land_detect_alt:
-                logger.info(f"高度低于触地阈值（{current_alt:.2f}m），确认触地")
-                return True
-
-            time.sleep(0.5)
+            vz = -speed if error > 0 else speed
+            self.send_body_velocity(0, 0, vz, 0)
+            time.sleep(command_interval)
 
     def set_mode(self, mode: str) -> bool:
         """
@@ -484,7 +469,6 @@ class MCUBridge(IMCUBridge):
         # 注册 SERIAL_CONTROL 消息监听
         self._register_serial_listener()
 
-<<<<<<< HEAD
     def _build_serial_listener(self):
         """构建串口数据监听回调。"""
         def _on_serial_control(vehicle, name, msg):
@@ -512,46 +496,6 @@ class MCUBridge(IMCUBridge):
 
     def _is_mcu_serial_port(self, port: int) -> bool:
         return port in {self.config.mcu_serial_port, self._serial_control_port()}
-=======
-    def _build_serial_listener(self):
-        """构建串口数据监听回调。"""
-        def _on_serial_control(vehicle, name, msg):
-            """处理从 Pixhawk 串口收到的 Pico 2 响应"""
-            logger.debug(f"[MCUBridge] 收到消息: {name}")
-            
-            # 检查 port 属性
-            if not hasattr(msg, 'port'):
-                logger.debug(f"[MCUBridge] 消息没有 port 属性")
-                return
-            
-            logger.debug(f"[MCUBridge] 消息 port: {msg.port}, 期望 port: {self.config.mcu_serial_port}")
-            
-            if msg.port != self.config.mcu_serial_port:
-                logger.debug(f"[MCUBridge] port 不匹配，忽略")
-                return
-
-            # 解析串口数据
-            if not hasattr(msg, 'data') or not hasattr(msg, 'count'):
-                logger.debug(f"[MCUBridge] 消息没有 data 或 count 属性")
-                return
-            
-            logger.debug(f"[MCUBridge] 数据长度: {msg.count}")
-            
-            if msg.count > 0:
-                data = bytes(msg.data[:msg.count])
-                logger.debug(f"[MCUBridge] 原始数据: {data.hex()}")
-                logger.debug(f"[MCUBridge] 数据内容: {data}")
-                
-                for resp_bytes, resp_str in self._response_map.items():
-                    if resp_bytes in data:
-                        self._response_buffer = resp_str
-                        logger.info(f"[MCUBridge] ✓ 收到 Pico 2 响应：{resp_str}")
-                        return
-                
-                logger.debug(f"[MCUBridge] 数据不匹配预期响应")
-
-        return _on_serial_control
->>>>>>> 941ea95 (完整的起飞降落代码，simple_goto代码待debug)
 
     def _register_serial_listener(self):
         """注册串口数据监听回调，必要时重新绑定到最新飞控连接。"""
@@ -608,21 +552,10 @@ class MCUBridge(IMCUBridge):
             return False
 
         try:
-<<<<<<< HEAD
             # 构造 SERIAL_CONTROL 消息
             cmd_bytes = command.encode('ascii')
             msg = self._vehicle.message_factory.serial_control_encode(
                 self._serial_control_port(),  # 目标串口
-=======
-            # 构造 SERIAL_CONTROL 消息
-            cmd_bytes = command.encode('ascii')
-            # 数据必须是 70 字节的数组，不足的用 0 填充
-            data_array = bytearray(70)
-            data_array[:len(cmd_bytes)] = cmd_bytes
-            
-            msg = self._vehicle.message_factory.serial_control_encode(
-                self.config.mcu_serial_port,  # 目标串口
->>>>>>> 941ea95 (完整的起飞降落代码，simple_goto代码待debug)
                 0,  # 预留
                 0,  # 操作：写入
                 self.config.mcu_baudrate,  # 波特率
@@ -657,4 +590,3 @@ class MCUBridge(IMCUBridge):
             and self._vehicle is not None
             and self._vehicle is current_vehicle
         )
-

@@ -85,6 +85,9 @@ flight:
   arm_timeout_s: 10             # 解锁等待超时 (s)
   takeoff_timeout_s: 15         # 起飞等待超时 (s)
   land_timeout_s: 20            # 降落等待超时 (s)
+  goto_vertical_speed: 0.15     # simple_goto altitude vertical speed (m/s)
+  goto_alt_tolerance: 0.05      # simple_goto altitude tolerance (m)
+  goto_command_hz: 5            # simple_goto velocity command rate
 
 # ======== MCU 通信（MCUBridge 使用） ========
 mcu:

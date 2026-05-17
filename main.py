@@ -225,6 +225,9 @@ def build_flight_links(args: argparse.Namespace, config: ConfigManager) -> tuple
         takeoff_timeout_s=cfg_int(config, "flight.takeoff_timeout_s", 15),
         land_timeout_s=cfg_int(config, "flight.land_timeout_s", 20),
         land_detect_alt=cfg_float(config, "flight.land_detect_alt", 0.15),
+        goto_vertical_speed=cfg_float(config, "flight.goto_vertical_speed", 0.15),
+        goto_alt_tolerance=cfg_float(config, "flight.goto_alt_tolerance", 0.05),
+        goto_command_hz=cfg_float(config, "flight.goto_command_hz", 5.0),
         pixhawk_baud=int(option_or_config(args.baud, config, "mavlink.baud", 57600)),
         mcu_serial_port=cfg_int(
             config,

@@ -8,7 +8,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.flight_bridge import FlightBridge, FlightConfig
-from dronekit import VehicleMode, LocationGlobalRelative
+from dronekit import VehicleMode
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -83,15 +83,9 @@ if fb.connect():
         print("悬停 10 秒...")
         time.sleep(10)
 
-        current = vehicle.location.global_relative_frame
-        target = LocationGlobalRelative(
-            current.lat,
-            current.lon,
-            land_altitude
-        )
-
         print("发送降落指令")
-        fb.simple_goto(land_altitude)
+        if not fb.simple_goto(land_altitude):
+            print("Altitude adjustment failed")
         # # 悬停 5 秒后降落
         # print("悬停 10 秒...")
         # time.sleep(10)
