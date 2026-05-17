@@ -22,7 +22,6 @@ class FlightConfig:
     """飞行控制配置项"""
     connection_string: str = "tcp:127.0.0.1:5760"  # 飞控连接串
     heartbeat_timeout: int = 60  # 连接心跳超时(s)
-<<<<<<< HEAD
     takeoff_timeout_s: int = 30  # 起飞超时(s)
     land_timeout_s: int = 60  # 降落超时(s)
     land_detect_alt: float = 0.1  # 触地检测高度(m)
@@ -32,14 +31,6 @@ class FlightConfig:
     reconnect_enabled: bool = False
     reconnect_max_attempts: int = 3
     reconnect_backoff_s: float = 1.0
-=======
-    takeoff_timeout_s: int = 30  # 起飞超时(s)
-    land_timeout_s: int = 60  # 降落超时(s)
-    land_detect_alt: float = 0.1  # 触地检测高度(m)
-    pixhawk_baud: int = 57600  # Pixhawk 串口波特率
-    mcu_serial_port: int = 3  # Pico 2 连接的 Pixhawk UART 端口（SERIAL3）
-    mcu_baudrate: int = 57600  # Pico 2 波特率
->>>>>>> 941ea95 (完整的起飞降落代码，simple_goto代码待debug)
 
 
 class FlightBridge(IFlightBridge):
@@ -139,7 +130,6 @@ class FlightBridge(IFlightBridge):
                 return False
             time.sleep(0.5)
 
-<<<<<<< HEAD
         # 4. 执行起飞
         logger.info(f"起飞到目标高度：{target_alt}m")
         vehicle.simple_takeoff(target_alt)
@@ -158,29 +148,6 @@ class FlightBridge(IFlightBridge):
                 return True
 
             time.sleep(0.5)
-=======
-        # 4. 执行起飞
-        logger.info(f"起飞到目标高度：{target_alt}m")
-        vehicle.simple_takeoff(target_alt)
-            
-        # 5. 等待到达目标高度
-        # while True:
-        #     # 检查超时
-        #     if time.time() - start_time > self.config.takeoff_timeout_s:
-        #         logger.error(f"起飞超时：{self.config.takeoff_timeout_s}s 未到达目标高度")
-        #         return False
-
-        #     # 获取当前相对高度
-        #     current_alt = vehicle.location.global_relative_frame.alt
-        #     logger.debug(f"当前高度：{current_alt:.2f}m / 目标高度：{target_alt}m")
-
-        #     # 高度达标（95%）则返回成功
-        #     if current_alt >= target_alt * 0.95:
-        #         logger.info(f"到达目标高度：{current_alt:.2f}m")
-        #         return True
-
-        #     time.sleep(0.5)
->>>>>>> 941ea95 (完整的起飞降落代码，simple_goto代码待debug)
 
     def send_body_velocity(
         self, vx: float, vy: float, vz: float, yaw_rate: float
@@ -464,7 +431,6 @@ class MCUBridge(IMCUBridge):
         # 注册 SERIAL_CONTROL 消息监听
         self._register_serial_listener()
 
-<<<<<<< HEAD
     def _build_serial_listener(self):
         """构建串口数据监听回调。"""
         def _on_serial_control(vehicle, name, msg):
@@ -492,46 +458,6 @@ class MCUBridge(IMCUBridge):
 
     def _is_mcu_serial_port(self, port: int) -> bool:
         return port in {self.config.mcu_serial_port, self._serial_control_port()}
-=======
-    def _build_serial_listener(self):
-        """构建串口数据监听回调。"""
-        def _on_serial_control(vehicle, name, msg):
-            """处理从 Pixhawk 串口收到的 Pico 2 响应"""
-            logger.debug(f"[MCUBridge] 收到消息: {name}")
-            
-            # 检查 port 属性
-            if not hasattr(msg, 'port'):
-                logger.debug(f"[MCUBridge] 消息没有 port 属性")
-                return
-            
-            logger.debug(f"[MCUBridge] 消息 port: {msg.port}, 期望 port: {self.config.mcu_serial_port}")
-            
-            if msg.port != self.config.mcu_serial_port:
-                logger.debug(f"[MCUBridge] port 不匹配，忽略")
-                return
-
-            # 解析串口数据
-            if not hasattr(msg, 'data') or not hasattr(msg, 'count'):
-                logger.debug(f"[MCUBridge] 消息没有 data 或 count 属性")
-                return
-            
-            logger.debug(f"[MCUBridge] 数据长度: {msg.count}")
-            
-            if msg.count > 0:
-                data = bytes(msg.data[:msg.count])
-                logger.debug(f"[MCUBridge] 原始数据: {data.hex()}")
-                logger.debug(f"[MCUBridge] 数据内容: {data}")
-                
-                for resp_bytes, resp_str in self._response_map.items():
-                    if resp_bytes in data:
-                        self._response_buffer = resp_str
-                        logger.info(f"[MCUBridge] ✓ 收到 Pico 2 响应：{resp_str}")
-                        return
-                
-                logger.debug(f"[MCUBridge] 数据不匹配预期响应")
-
-        return _on_serial_control
->>>>>>> 941ea95 (完整的起飞降落代码，simple_goto代码待debug)
 
     def _register_serial_listener(self):
         """注册串口数据监听回调，必要时重新绑定到最新飞控连接。"""
@@ -581,21 +507,10 @@ class MCUBridge(IMCUBridge):
             return False
 
         try:
-<<<<<<< HEAD
             # 构造 SERIAL_CONTROL 消息
             cmd_bytes = command.encode('ascii')
             msg = self._vehicle.message_factory.serial_control_encode(
                 self._serial_control_port(),  # 目标串口
-=======
-            # 构造 SERIAL_CONTROL 消息
-            cmd_bytes = command.encode('ascii')
-            # 数据必须是 70 字节的数组，不足的用 0 填充
-            data_array = bytearray(70)
-            data_array[:len(cmd_bytes)] = cmd_bytes
-            
-            msg = self._vehicle.message_factory.serial_control_encode(
-                self.config.mcu_serial_port,  # 目标串口
->>>>>>> 941ea95 (完整的起飞降落代码，simple_goto代码待debug)
                 0,  # 预留
                 0,  # 操作：写入
                 self.config.mcu_baudrate,  # 波特率
