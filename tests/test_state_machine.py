@@ -126,9 +126,11 @@ class StubController:
 
     def __init__(self):
         self.velocity: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self.last_center: tuple[float, float] | None = None
         self.reset_count = 0
 
     def compute_velocity(self, target_pose, center_u, center_v, dt):
+        self.last_center = (center_u, center_v)
         return self.velocity
 
     def reset(self):
@@ -172,6 +174,8 @@ class StubConfig:
         "transfer.transfer_alt": 1.5,
         "camera.center_u": 320,
         "camera.center_v": 240,
+        "camera.control_center_offset_u_px": 0.0,
+        "camera.control_center_offset_v_px": 0.0,
         "logging.level": "WARNING",  # 抑制测试中的日志输出
         "logging.log_dir": "logs/",
         "logging.enable_flight_recorder": False,  # 测试中禁用黑匣子
@@ -403,6 +407,22 @@ class TestAlignDebounce:
         fsm.tick(DUMMY_FRAME)
         assert fsm._align_stable_start == 0.0
         assert fsm.state == FlightState.TASK_REC_ALIGN
+
+
+class TestVisualControlCenter:
+    def test_state_machine_applies_camera_control_center_offset(
+        self, flight, mcu, perception, controller, config
+    ):
+        config.set("camera.center_u", 320)
+        config.set("camera.center_v", 240)
+        config.set("camera.control_center_offset_u_px", 5.0)
+        config.set("camera.control_center_offset_v_px", 20.0)
+        fsm = GlobalFSM(flight, mcu, perception, controller, config)
+        advance_to_state(fsm, flight, mcu, FlightState.TASK_REC_ALIGN)
+
+        fsm.tick(DUMMY_FRAME)
+
+        assert controller.last_center == (325.0, 260.0)
 
 
 class TestNoMCUFlightProfile:

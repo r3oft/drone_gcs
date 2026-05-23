@@ -191,8 +191,12 @@ class GlobalFSM:
             raise ValueError("mission.no_mcu_retakeoff_wait_timeout_s must be > 0")
         self._takeoff_alt = min(self._takeoff_alt, self._max_flight_alt_m)
         self._transfer_alt = min(self._transfer_alt, self._max_flight_alt_m)
-        self._center_u: float = config.get("camera.center_u", 320)
-        self._center_v: float = config.get("camera.center_v", 240)
+        self._center_u: float = float(config.get("camera.center_u", 320)) + float(
+            config.get("camera.control_center_offset_u_px", 0.0)
+        )
+        self._center_v: float = float(config.get("camera.center_v", 240)) + float(
+            config.get("camera.control_center_offset_v_px", 0.0)
+        )
 
         # ── FSM 核心状态 ──
         self._state: FlightState = FlightState.IDLE

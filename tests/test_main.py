@@ -206,6 +206,45 @@ def test_default_controller_inverts_live_y_axis():
     assert vyaw == 0.0
 
 
+def test_control_center_uses_default_camera_bias():
+    config = ConfigManager("config/default.yaml")
+
+    assert gcs_main.control_center(config) == (160.0, 140.0)
+
+
+def test_camera_center_offset_override_applies_to_runtime():
+    args = gcs_main.parse_args(
+        [
+            "--mode",
+            "mock",
+            "--camera-center-offset-u",
+            "3",
+            "--camera-center-offset-v",
+            "12",
+            "--no-flight-recorder",
+            "--perf-print-interval",
+            "0",
+        ]
+    )
+    logger = types.SimpleNamespace(
+        info=lambda *args, **kwargs: None,
+        warning=lambda *args, **kwargs: None,
+        error=lambda *args, **kwargs: None,
+    )
+
+    components = gcs_main.build_runtime(args, logger)
+    try:
+        assert components.config.get("camera.control_center_offset_u_px") == 3.0
+        assert components.config.get("camera.control_center_offset_v_px") == 12.0
+        assert gcs_main.control_center(components.config) == (163.0, 132.0)
+
+        target = components.perception.process_frame(None, 0)
+        assert target["u"] == 163.0
+        assert target["v"] == 132.0
+    finally:
+        gcs_main.close_runtime(components, logger)
+
+
 def test_default_controller_caps_yaw_for_both_profiles():
     config = ConfigManager("config/default.yaml")
 

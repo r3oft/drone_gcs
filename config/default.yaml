@@ -94,6 +94,8 @@ camera:
   resolution: { w: 320, h: 240 }
   center_u: 160                                  # 光学中心 u 坐标
   center_v: 120                                  # 光学中心 v 坐标
+  control_center_offset_u_px: 0.0                # 视觉伺服控制中心 u 偏置（px，右为正）
+  control_center_offset_v_px: 40.0               # 视觉伺服控制中心 v 偏置（px，下为正，用于补偿左侧摄像头落地右偏）
   offset: { x: 0.0, y: 0.0 }                    # 外侧安装偏移（米），Phase 3 实测填入
 
 # ======== 末端执行器（叉式托举机构） ========

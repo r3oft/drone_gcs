@@ -37,6 +37,16 @@ TARGET_DEFAULT_CLS_IDS = {
 }
 
 
+def control_center(config: ConfigManager, frame_shape: tuple[int, ...] | None = None) -> tuple[float, float]:
+    fallback_u = frame_shape[1] / 2 if frame_shape is not None and len(frame_shape) >= 2 else 160.0
+    fallback_v = frame_shape[0] / 2 if frame_shape is not None and len(frame_shape) >= 2 else 120.0
+    center_u = cfg_float(config, "camera.center_u", fallback_u)
+    center_v = cfg_float(config, "camera.center_v", fallback_v)
+    center_u += cfg_float(config, "camera.control_center_offset_u_px", 0.0)
+    center_v += cfg_float(config, "camera.control_center_offset_v_px", 0.0)
+    return center_u, center_v
+
+
 class StopFlag:
     def __init__(self) -> None:
         self.requested = False
@@ -226,9 +236,10 @@ def build_streamer(args: argparse.Namespace, config: ConfigManager) -> Any:
 
 def build_perception(args: argparse.Namespace, config: ConfigManager) -> Any:
     if args.mode == "mock":
+        center_u, center_v = control_center(config)
         return SyntheticTargetPoseEstimator(
-            center_u=cfg_float(config, "camera.center_u", 160.0),
-            center_v=cfg_float(config, "camera.center_v", 120.0),
+            center_u=center_u,
+            center_v=center_v,
             behavior=args.mock_target,
         )
 
@@ -397,6 +408,10 @@ def build_runtime(args: argparse.Namespace, logger: Any) -> RuntimeComponents:
     if args.servo_max_yaw is not None:
         overrides["servo.pickup_align.max_vel.yaw"] = args.servo_max_yaw
         overrides["servo.delivery_align.max_vel.yaw"] = args.servo_max_yaw
+    if args.camera_center_offset_u is not None:
+        overrides["camera.control_center_offset_u_px"] = args.camera_center_offset_u
+    if args.camera_center_offset_v is not None:
+        overrides["camera.control_center_offset_v_px"] = args.camera_center_offset_v
     if args.no_flight_recorder:
         overrides["logging.enable_flight_recorder"] = False
     if overrides:
@@ -582,10 +597,11 @@ class MainDebugHUD:
             return target_name, None, None, (0.0, 0.0, 0.0)
 
         controller = self._debug_controllers[target_name]
+        center_u, center_v = control_center(components.config, frame.shape)
         debug = controller.compute_debug(
             target,
-            center_u=float(components.config.get("camera.center_u", frame.shape[1] / 2)),
-            center_v=float(components.config.get("camera.center_v", frame.shape[0] / 2)),
+            center_u=center_u,
+            center_v=center_v,
             dt=0.0,
         )
         return target_name, target, debug, debug["velocities"]
@@ -638,10 +654,8 @@ class MainDebugHUD:
         self.last_target_found = target is not None
         self.last_target_source = target_source
 
-        center = (
-            int(round(float(components.config.get("camera.center_u", annotated.shape[1] / 2)))),
-            int(round(float(components.config.get("camera.center_v", annotated.shape[0] / 2)))),
-        )
+        center_u, center_v = control_center(components.config, annotated.shape)
+        center = (int(round(center_u)), int(round(center_v)))
         cv2.drawMarker(
             annotated,
             center,
@@ -987,6 +1001,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--servo-sign-y", type=float, choices=(-1.0, 1.0), default=None)
     parser.add_argument("--servo-sign-yaw", type=float, choices=(-1.0, 1.0), default=None)
     parser.add_argument("--servo-max-yaw", type=float, default=None)
+    parser.add_argument("--camera-center-offset-u", type=float, default=None)
+    parser.add_argument("--camera-center-offset-v", type=float, default=None)
     parser.add_argument("--debug-hud", action="store_true")
     parser.add_argument("--debug-window-name", default="Drone GCS Main HUD")
     parser.add_argument(
