@@ -31,6 +31,42 @@ class DirectSerialMCUBridge(IMCUBridge):
         self._serial: Any | None = None
         self._rx_buffer = bytearray()
 
+    def _pop_response_from_buffer(self) -> str | None:
+        """Return the first complete MCU response currently buffered."""
+        known_tokens = [
+            response.encode(self.config.encoding)
+            for response in sorted(MCUResponse.ALL, key=len, reverse=True)
+        ]
+
+        # Preferred path: consume newline-terminated frames.
+        if b"\n" in self._rx_buffer:
+            raw_response, remaining = self._rx_buffer.split(b"\n", 1)
+            self._rx_buffer = bytearray(remaining)
+            response = raw_response.decode(self.config.encoding, errors="ignore").strip()
+            if not response:
+                return None
+            if response not in MCUResponse.ALL:
+                logger.warning("Ignoring unknown MCU response: %s", response)
+                return None
+
+            logger.info("Received MCU response: %s", response)
+            return response
+
+        # Some simple MCU firmware writes tokens without a trailing newline.
+        # Serial.readline() then returns the token after timeout, so accept a
+        # standalone known response even when no '\n' has arrived.
+        stripped = bytes(self._rx_buffer).strip()
+        if not stripped:
+            return None
+        for token in known_tokens:
+            if stripped == token:
+                self._rx_buffer.clear()
+                response = token.decode(self.config.encoding)
+                logger.info("Received MCU response: %s", response)
+                return response
+
+        return None
+
     def connect(self) -> bool:
         if self.is_connected():
             return True
@@ -91,22 +127,9 @@ class DirectSerialMCUBridge(IMCUBridge):
             return None
 
         if not line:
-            return None
+            return self._pop_response_from_buffer()
         self._rx_buffer.extend(line)
-        if b"\n" not in self._rx_buffer:
-            return None
-
-        raw_response, remaining = self._rx_buffer.split(b"\n", 1)
-        self._rx_buffer = bytearray(remaining)
-        response = raw_response.decode(self.config.encoding, errors="ignore").strip()
-        if not response:
-            return None
-        if response not in MCUResponse.ALL:
-            logger.warning("Ignoring unknown MCU response: %s", response)
-            return None
-
-        logger.info("Received MCU response: %s", response)
-        return response
+        return self._pop_response_from_buffer()
 
     def is_connected(self) -> bool:
         if self._serial is None:

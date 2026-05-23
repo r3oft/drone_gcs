@@ -94,6 +94,21 @@ def test_direct_serial_mcu_waits_for_complete_line(monkeypatch):
     assert bridge.get_latest_response() == MCUResponse.GRAB_DONE
 
 
+def test_direct_serial_mcu_accepts_response_without_newline(monkeypatch):
+    bridge, _, _ = make_bridge(monkeypatch, FakeSerial([b"GRAB_DONE"]))
+    assert bridge.connect()
+
+    assert bridge.get_latest_response() == MCUResponse.GRAB_DONE
+
+
+def test_direct_serial_mcu_accepts_fragmented_response_without_newline(monkeypatch):
+    bridge, _, _ = make_bridge(monkeypatch, FakeSerial([b"GRAB_", b"DONE"]))
+    assert bridge.connect()
+
+    assert bridge.get_latest_response() is None
+    assert bridge.get_latest_response() == MCUResponse.GRAB_DONE
+
+
 def test_direct_serial_mcu_ignores_unknown_response(monkeypatch):
     bridge, _, _ = make_bridge(monkeypatch, FakeSerial([b"NOISE\n"]))
     assert bridge.connect()

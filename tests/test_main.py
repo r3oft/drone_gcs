@@ -1,5 +1,6 @@
 import sys
 import types
+import signal
 
 import main as gcs_main
 
@@ -91,6 +92,72 @@ def test_mock_short_start_loop_runs_without_hardware():
     )
 
     assert result == 0
+
+
+def test_signal_handler_interrupts_blocking_work(monkeypatch):
+    installed_handlers = {}
+
+    def fake_signal(signum, handler):
+        installed_handlers[signum] = handler
+
+    monkeypatch.setattr(gcs_main.signal, "signal", fake_signal)
+    stop_flag = gcs_main.StopFlag()
+    logger = types.SimpleNamespace(warning=lambda *args, **kwargs: None)
+
+    gcs_main.install_signal_handlers(stop_flag, logger)
+
+    try:
+        installed_handlers[signal.SIGINT](signal.SIGINT, None)
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError("SIGINT handler must raise KeyboardInterrupt")
+
+    assert stop_flag.requested is True
+
+
+def test_close_runtime_sends_zero_velocity_before_cleanup():
+    class FakeFlight:
+        def __init__(self):
+            self.velocity_log = []
+            self._vehicle = None
+
+        def send_body_velocity(self, vx, vy, vz, yaw_rate):
+            self.velocity_log.append((vx, vy, vz, yaw_rate))
+
+    class FakeFSM:
+        _recorder = None
+
+    class FakeStreamer:
+        def __init__(self):
+            self.released = False
+
+        def release(self):
+            self.released = True
+
+    class FakeMCU:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    flight = FakeFlight()
+    streamer = FakeStreamer()
+    mcu = FakeMCU()
+    components = types.SimpleNamespace(
+        flight=flight,
+        streamer=streamer,
+        mcu=mcu,
+        fsm=FakeFSM(),
+    )
+    logger = types.SimpleNamespace(warning=lambda *args, **kwargs: None)
+
+    gcs_main.close_runtime(components, logger)
+
+    assert flight.velocity_log == [(0, 0, 0, 0)]
+    assert streamer.released is True
+    assert mcu.closed is True
 
 
 def test_build_controller_from_default_config():
@@ -286,7 +353,7 @@ def test_live_build_can_use_legacy_pixhawk_mcu_transport(monkeypatch):
     assert mcu.flight is flight
 
 
-def test_no_mcu_live_build_uses_null_mcu(monkeypatch):
+def test_no_mcu_live_build_uses_direct_serial_mcu(monkeypatch):
     classes = install_fake_live_modules(monkeypatch)
     args = gcs_main.parse_args(
         [
@@ -301,10 +368,12 @@ def test_no_mcu_live_build_uses_null_mcu(monkeypatch):
     flight, mcu = gcs_main.build_flight_links(args, config)
 
     assert isinstance(flight, classes.FlightBridge)
-    assert isinstance(mcu, gcs_main.NullMCUBridge)
+    assert isinstance(mcu, classes.DirectSerialMCUBridge)
+    assert mcu.config.port == "/dev/ttyACM0"
+    assert mcu.config.baudrate == 57600
 
 
-def test_no_mcu_mock_build_uses_null_mcu():
+def test_no_mcu_mock_build_uses_mock_mcu():
     args = gcs_main.parse_args(
         [
             "--mode",
@@ -317,7 +386,6 @@ def test_no_mcu_mock_build_uses_null_mcu():
 
     _, mcu = gcs_main.build_flight_links(args, config)
 
-    assert isinstance(mcu, gcs_main.NullMCUBridge)
-    assert mcu.connect() is True
-    assert mcu.send_command("RESET") is True
-    assert mcu.get_latest_response() == "RESET_DONE"
+    from utils.mock import MockMCUBridge
+
+    assert isinstance(mcu, MockMCUBridge)

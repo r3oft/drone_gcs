@@ -65,8 +65,8 @@ mission:
   pre_pickup_forward_m: 0.5
   pre_pickup_speed_mps: 0.2
   no_mcu_pickup_use_land_mode: false
-  no_mcu_pickup_touchdown_alt_m: 0.08
-  no_mcu_pickup_touchdown_hold_s: 0.4
+  no_mcu_pickup_touchdown_alt_m: 0.02
+  no_mcu_pickup_touchdown_hold_s: 0.6
   no_mcu_pickup_min_descend_s: 0.8
   no_mcu_pickup_descend_vz_mps: 0.12
   no_mcu_pickup_descend_timeout_s: 8.0
@@ -120,9 +120,10 @@ mcu:
   port: "/dev/ttyACM0"            # PC direct serial port for MCU
   read_timeout_s: 0.02            # non-blocking serial read timeout
   write_timeout_s: 0.5            # serial write timeout
+  reset_required: false           # current fork MCU protocol only requires grab/release handshakes
   pixhawk_serial_port: 4          # legacy Pixhawk SERIAL_CONTROL UART
   serial_port: 4                 # Pico 2 所在 Pixhawk UART 号，发送时映射到 MAVLink SERIAL_CONTROL enum
-  baudrate: 115200               # Pico 2 串口波特率
+  baudrate: 57600                # Pico 2 串口波特率
   grab_timeout_s: 10            # 等待 GRAB_DONE 响应超时 (s)
   release_timeout_s: 10         # 等待 RELEASE_DONE 响应超时 (s)
   retry_max: 2                  # 动作失败最大重试次数

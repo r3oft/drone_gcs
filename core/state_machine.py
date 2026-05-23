@@ -124,6 +124,9 @@ class GlobalFSM:
         self._grab_timeout: float = config.get("mcu.grab_timeout_s", 10.0)
         self._release_timeout: float = config.get("mcu.release_timeout_s", 10.0)
         self._retry_max: int = config.get("mcu.retry_max", 2)
+        self._mcu_reset_required: bool = bool(
+            config.get("mcu.reset_required", False)
+        )
         self._transfer_speed: float = config.get("transfer.transfer_speed", 0.3)
         self._transfer_distance: float = config.get("transfer.delivery_distance_m", 3.0)
         self._transfer_alt: float = config.get("transfer.transfer_alt", 1.5)
@@ -365,8 +368,14 @@ class GlobalFSM:
                 and not self._transfer_takeoff_done
                 and (not tel["armed"] or tel["alt"] < self._land_detect_alt)
             )
+            final_release_after_land = (
+                self._no_mcu_flight_test
+                and self._state == FlightState.TASK_REL_RELEASE
+                and tel["mode"] == FlightMode.LAND
+                and (not tel["armed"] or tel["alt"] < self._land_detect_alt)
+            )
             if self._state not in (FlightState.OUTBOUND, FlightState.EMERGENCY):
-                if landed_between_no_mcu_legs:
+                if landed_between_no_mcu_legs or final_release_after_land:
                     return
                 self._logger.warning(
                     f"飞控模式被外部切换为 {tel['mode']}，进入 EMERGENCY"
@@ -637,12 +646,16 @@ class GlobalFSM:
                 self._logger.error("MCU connect failed, entering EMERGENCY")
                 self._transition_to(FlightState.EMERGENCY)
                 return
+            self._mcu_cmd_sent = True
+            self._mcu_cmd_time = time.time()
+            if not self._mcu_reset_required:
+                self._logger.info("MCU RESET handshake skipped")
+                self._transition_to(FlightState.INBOUND)
+                return
             if not self._mcu.send_command(MCUCommand.RESET):
                 self._logger.error("MCU RESET send failed, entering EMERGENCY")
                 self._transition_to(FlightState.EMERGENCY)
                 return
-            self._mcu_cmd_sent = True
-            self._mcu_cmd_time = time.time()
             return
 
         # 超时保护
@@ -771,8 +784,10 @@ class GlobalFSM:
                 self._flight.send_body_velocity(0, 0, 0, 0)
                 self._tick_vel = (0, 0, 0)
                 self._controller.reset()
-                self._logger.info("No-MCU pickup guided descent complete")
-                self._transition_to(FlightState.TRANS_DELIVERY)
+                self._logger.info(
+                    "No-MCU pickup guided descent complete; waiting for grab"
+                )
+                self._transition_to(FlightState.TASK_REC_WAIT_LOAD)
                 return
 
             elapsed = now - self._no_mcu_pickup_descend_start_time
@@ -809,6 +824,8 @@ class GlobalFSM:
 
     def _handle_task_rec_wait_load(self, frame, dt: float, now: float) -> None:
         """TASK_REC_WAIT_LOAD：等待人工装填 + 红外确认。"""
+        self._flight.send_body_velocity(0, 0, 0, 0)
+        self._tick_vel = (0, 0, 0)
         self._handle_mcu_action(
             command=MCUCommand.START_GRAB,
             success_response=MCUResponse.GRAB_DONE,
@@ -833,6 +850,20 @@ class GlobalFSM:
                 f"mode={tel.get('mode')} armed={tel.get('armed')}"
             )
 
+        if not self._mcu_cmd_sent:
+            self._mcu_cmd_sent = True
+            self._logger.info(
+                "No-MCU guided climb takeoff command: "
+                f"target_alt={target_alt:.2f}m mode={tel.get('mode')} "
+                f"armed={tel.get('armed')} alt={alt:.2f}m"
+            )
+            success = self._flight.arm_and_takeoff(target_alt)
+            self._mcu_cmd_time = time.time()
+            if success is False:
+                self._logger.error("No-MCU guided climb takeoff command failed")
+                self._transition_to(FlightState.EMERGENCY)
+                return True
+
         if alt >= threshold:
             self._transfer_takeoff_done = True
             self._transfer_start_time = now
@@ -853,10 +884,9 @@ class GlobalFSM:
             self._transition_to(FlightState.EMERGENCY)
             return True
 
-        self._flight.send_body_velocity(
-            0, 0, -self._no_mcu_retakeoff_climb_vz_mps, 0
-        )
-        self._tick_vel = (0, 0, -self._no_mcu_retakeoff_climb_vz_mps)
+        # Do not keep sending vertical velocity here.  After simple_takeoff()
+        # the flight controller owns the altitude target; another velocity
+        # stream can override that target and keep the vehicle on the ground.
         return True
 
     def _handle_trans_delivery(self, frame, dt: float, now: float) -> None:
@@ -932,7 +962,7 @@ class GlobalFSM:
                 self._controller.reset()
                 if self._no_mcu_flight_test:
                     self._land_and_transition(
-                        FlightState.IDLE,
+                        FlightState.TASK_REL_RELEASE,
                         "No-MCU delivery alignment",
                     )
                 else:
@@ -944,7 +974,7 @@ class GlobalFSM:
         """TASK_REL_DESCEND：盲降到投递区。"""
         if self._no_mcu_flight_test:
             self._land_and_transition(
-                FlightState.IDLE,
+                FlightState.TASK_REL_RELEASE,
                 "No-MCU delivery descent",
             )
             return
@@ -973,7 +1003,7 @@ class GlobalFSM:
             success_response=MCUResponse.RELEASE_DONE,
             fail_response=MCUResponse.RELEASE_FAIL,
             timeout=self._release_timeout,
-            success_state=FlightState.OUTBOUND,
+            success_state=FlightState.IDLE if self._no_mcu_flight_test else FlightState.OUTBOUND,
             now=now,
         )
 

@@ -259,9 +259,6 @@ def build_flight_links(args: argparse.Namespace, config: ConfigManager) -> tuple
         from utils.mock import MockFlightBridge, MockMCUBridge
 
         flight = MockFlightBridge()
-        if mission_profile == MISSION_NO_MCU_FLIGHT_TEST:
-            return flight, NullMCUBridge()
-
         mcu = MockMCUBridge()
         if args.mock_fast:
             from core.interfaces import MCUCommand, MCUResponse
@@ -304,9 +301,6 @@ def build_flight_links(args: argparse.Namespace, config: ConfigManager) -> tuple
     )
     flight = FlightBridge(flight_config)
 
-    if mission_profile == MISSION_NO_MCU_FLIGHT_TEST:
-        return flight, NullMCUBridge()
-
     mcu_transport = option_or_config(
         args.mcu_transport,
         config,
@@ -321,7 +315,7 @@ def build_flight_links(args: argparse.Namespace, config: ConfigManager) -> tuple
                 option_or_config(args.mcu_port, config, "mcu.port", "/dev/ttyACM0")
             ),
             baudrate=int(
-                option_or_config(args.mcu_baud, config, "mcu.baudrate", 115200)
+                option_or_config(args.mcu_baud, config, "mcu.baudrate", 57600)
             ),
             read_timeout_s=cfg_float(config, "mcu.read_timeout_s", 0.02),
             write_timeout_s=cfg_float(config, "mcu.write_timeout_s", 0.5),
@@ -898,6 +892,13 @@ def close_runtime(components: RuntimeComponents | None, logger: Any) -> None:
     if components is None:
         return
 
+    stop_velocity = getattr(components.flight, "send_body_velocity", None)
+    if callable(stop_velocity):
+        try:
+            stop_velocity(0, 0, 0, 0)
+        except Exception as exc:
+            logger.warning("Failed to send stop velocity during shutdown: %s", exc)
+
     recorder = getattr(components.fsm, "_recorder", None)
     if recorder is not None:
         recorder.close()
@@ -925,6 +926,7 @@ def install_signal_handlers(stop_flag: StopFlag, logger: Any) -> None:
     def _handle_signal(signum, _frame) -> None:
         logger.warning("Signal %s received; stopping main loop", signum)
         stop_flag.requested = True
+        raise KeyboardInterrupt
 
     signal.signal(signal.SIGINT, _handle_signal)
     if hasattr(signal, "SIGTERM"):

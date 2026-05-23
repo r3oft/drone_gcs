@@ -163,6 +163,7 @@ class StubConfig:
         "flight.takeoff_alt": 1.5,
         "flight.takeoff_alt_tolerance_m": 0.12,
         "flight.land_detect_alt": 0.15,
+        "mcu.reset_required": False,
         "mcu.grab_timeout_s": 10.0,
         "mcu.release_timeout_s": 10.0,
         "mcu.retry_max": 2,
@@ -262,7 +263,7 @@ class TestRequestStart:
 class TestResetToInbound:
     """测试 #3: RESET → INBOUND。"""
 
-    def test_reset_to_inbound(self, fsm, flight, mcu):
+    def test_reset_to_inbound_without_mcu_reset(self, fsm, flight, mcu):
         # 进入 RESET
         fsm.request_start()
         fsm.tick(DUMMY_FRAME)
@@ -272,14 +273,11 @@ class TestResetToInbound:
         fsm.tick(DUMMY_FRAME)
         assert flight.connect_count == 1
         assert mcu.connect_count == 1
-        assert MCUCommand.RESET in mcu.command_log
-
-        # 第二个 tick: 心跳 OK + RESET_DONE → INBOUND
-        mcu.set_responses(MCUResponse.RESET_DONE)
-        fsm.tick(DUMMY_FRAME)
+        assert MCUCommand.RESET not in mcu.command_log
         assert fsm.state == FlightState.INBOUND
 
     def test_reset_timeout_to_emergency(self, fsm, flight, mcu):
+        fsm._mcu_reset_required = True
         fsm.request_start()
         fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.RESET
@@ -293,6 +291,7 @@ class TestResetToInbound:
         assert fsm.state == FlightState.EMERGENCY
 
     def test_slow_reset_connect_does_not_spend_response_timeout(self, fsm, flight, mcu):
+        fsm._mcu_reset_required = True
         advance_to_state(fsm, flight, mcu, FlightState.RESET)
         fsm._state_enter_time = time.time() - 60
 
@@ -458,10 +457,17 @@ class TestNoMCUFlightProfile:
         fsm._no_mcu_pickup_touchdown_start_time = time.time() - 1.0
         fsm.tick(DUMMY_FRAME)
 
-        assert fsm.state == FlightState.TRANS_DELIVERY
+        assert fsm.state == FlightState.TASK_REC_WAIT_LOAD
         assert flight.land_count == 0
         assert flight.velocity_log[-1] == (0, 0, 0, 0)
-        assert MCUCommand.START_GRAB not in mcu.command_log
+
+        fsm.tick(DUMMY_FRAME)
+        assert MCUCommand.START_GRAB in mcu.command_log
+        assert flight.velocity_log[-1] == (0, 0, 0, 0)
+
+        mcu.set_responses(MCUResponse.GRAB_DONE)
+        fsm.tick(DUMMY_FRAME)
+        assert fsm.state == FlightState.TRANS_DELIVERY
 
     def test_no_mcu_pickup_align_requires_yaw_zero_by_default(
         self, flight, mcu, perception, controller, config
@@ -540,7 +546,7 @@ class TestNoMCUFlightProfile:
         assert fsm.state == FlightState.TRANS_DELIVERY
         assert fsm._post_land_wait_required is True
 
-    def test_no_mcu_trans_delivery_climbs_without_rearming_when_still_armed(
+    def test_no_mcu_trans_delivery_sends_takeoff_without_velocity_override(
         self, flight, mcu, perception, controller, config
     ):
         config.set("mission.profile", "no_mcu_flight_test")
@@ -553,14 +559,14 @@ class TestNoMCUFlightProfile:
         fsm.tick(DUMMY_FRAME)
 
         assert fsm.state == FlightState.TRANS_DELIVERY
-        assert flight.takeoff_targets == []
-        assert flight.velocity_log[-1] == (0, 0, -0.2, 0)
+        assert flight.takeoff_targets == [0.5]
+        assert flight.velocity_log == []
 
         flight._telemetry["alt"] = 0.5
         fsm.tick(DUMMY_FRAME)
 
         assert fsm._transfer_takeoff_done is True
-        assert flight.takeoff_targets == []
+        assert flight.takeoff_targets == [0.5]
         assert flight.velocity_log[-1] == (0, 0, 0, 0)
 
     def test_no_mcu_trans_delivery_waits_for_disarm_before_second_takeoff(
@@ -603,7 +609,7 @@ class TestNoMCUFlightProfile:
         assert fsm.state == FlightState.IDLE
         assert flight.takeoff_targets == []
 
-    def test_delivery_align_lands_and_skips_release(self, flight, mcu, perception, controller, config):
+    def test_delivery_align_lands_then_releases(self, flight, mcu, perception, controller, config):
         config.set("mission.profile", "no_mcu_flight_test")
         fsm = GlobalFSM(flight, mcu, perception, controller, config)
         advance_to_state(fsm, flight, mcu, FlightState.TASK_REL_ALIGN)
@@ -614,8 +620,14 @@ class TestNoMCUFlightProfile:
         fsm.tick(DUMMY_FRAME)
 
         assert flight.land_count == 1
+        assert fsm.state == FlightState.TASK_REL_RELEASE
+
+        fsm.tick(DUMMY_FRAME)
+        assert MCUCommand.START_RELEASE in mcu.command_log
+
+        mcu.set_responses(MCUResponse.RELEASE_DONE)
+        fsm.tick(DUMMY_FRAME)
         assert fsm.state == FlightState.IDLE
-        assert MCUCommand.START_RELEASE not in mcu.command_log
 
 
 class TestTargetLost:
@@ -876,8 +888,6 @@ class TestFullHappyPath:
 
         # RESET: 连接 + MCU 复位
         fsm.tick(None)
-        mcu.set_responses(MCUResponse.RESET_DONE)
-        fsm.tick(None)
         assert fsm.state == FlightState.INBOUND
 
         # INBOUND → TASK_REC_ALIGN
@@ -929,7 +939,6 @@ class TestFullHappyPath:
         fsm.tick(None)
         assert fsm.state == FlightState.OUTBOUND
 
-        # OUTBOUND → IDLE
         flight.land_return = True
         fsm.tick(None)
         assert fsm.state == FlightState.IDLE
@@ -982,7 +991,7 @@ class TestStartupWithDisconnectedBridge:
         fsm.tick(None)  # IDLE → RESET
         assert fsm.state == FlightState.RESET
         fsm.tick(None)  # RESET handler: 执行 connect + MCU RESET
-        assert fsm.state == FlightState.RESET  # 等待 MCU 响应，非 EMERGENCY
+        assert fsm.state == FlightState.INBOUND
 
 
 class TestFirstFrameTargetLoss:
