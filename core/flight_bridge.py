@@ -339,7 +339,10 @@ class FlightBridge(IFlightBridge):
                 logger.info("Vehicle disarmed; landing confirmed")
                 return True
 
-            current_alt = self._get_altitude()
+            current_alt = self._get_local_altitude()
+            if current_alt is None:
+                logger.debug("LOCAL_POSITION_NED unavailable; falling back to global-relative altitude")
+                current_alt = self._get_altitude()
             if current_alt is not None and current_alt < self.config.land_detect_alt:
                 logger.info(f"Altitude below land threshold: {current_alt:.2f}m")
                 return True

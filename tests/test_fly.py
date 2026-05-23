@@ -80,7 +80,7 @@ if fb.connect():
         fb.arm_and_takeoff(target_altitude)
 
         print("悬停 10 秒...")
-        time.sleep(10)
+        time.sleep(3)
 
         # 第四步：测试 旋转角
         print("[4/4] 测试 send_body_velocity...")
@@ -89,10 +89,10 @@ if fb.connect():
             fb.send_body_velocity(0.0, 0.0, -0.1, 0.0)
             time.sleep(0.2)  # 5Hz
 
-        fb.send_body_velocity(0.0, 0.0, 0.0, 0.0)
-        print("\n停止速度指令")
+        # fb.send_body_velocity(0.0, 0.0, 0.0, 0.0)
+        # print("\n停止速度指令")
 
-        time.sleep(2)
+        # time.sleep(2)
 
         # print("发送降落指令")
         # if not fb.simple_goto(land_altitude):
@@ -128,10 +128,10 @@ if fb.connect():
         traceback.print_exc()
     
     finally:
-        if vehicle.armed:
-            print("\n上锁电机...")
-            vehicle.armed = False
-            time.sleep(1)
+        # if vehicle.armed:
+        #     print("\n上锁电机...")
+        #     vehicle.armed = False
+        #     time.sleep(1)
         
         vehicle.close()
         print("✓ 连接已关闭")
